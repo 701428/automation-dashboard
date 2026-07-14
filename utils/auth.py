@@ -54,17 +54,10 @@ def _inject_login_css() -> None:
         font-family:'Inter',sans-serif !important;
     }}
 
+    /* Hide all Streamlit main content chrome — we position everything ourselves */
     .main .block-container {{
-        margin-left: 45% !important;
-        width: 55% !important;
+        padding: 0 !important;
         max-width: none !important;
-        min-height: 100vh !important;
-        padding: 0 3rem !important;
-        display: flex !important;
-        flex-direction: column !important;
-        align-items: center !important;
-        justify-content: center !important;
-        box-sizing: border-box !important;
     }}
 
     @keyframes fadeUp {{
@@ -72,14 +65,24 @@ def _inject_login_css() -> None:
         to   {{ opacity:1; transform:translateY(0); }}
     }}
 
+    /* Right-panel background */
+    .main {{
+        background: linear-gradient(135deg,#F7FAFF 0%,#EEF5FF 100%) !important;
+    }}
+
+    /* Fix the form card in the centre of the right panel */
     div[data-testid="stForm"] {{
+        position: fixed !important;
+        top: 50% !important;
+        left: 72.5% !important;
+        transform: translate(-50%, -50%) !important;
+        width: 430px !important;
         background: #ffffff !important;
         border-radius: 20px !important;
-        box-shadow: 0 8px 48px rgba(24,70,163,0.13) !important;
+        box-shadow: 0 8px 48px rgba(24,70,163,0.14) !important;
         padding: 2.6rem 2.4rem 2.2rem !important;
-        width: 100% !important;
-        max-width: 430px !important;
         border: 1px solid #e2eaf8 !important;
+        z-index: 200 !important;
         animation: fadeUp 0.5s ease both !important;
     }}
     div[data-testid="stForm"] h1,
@@ -119,6 +122,31 @@ def _inject_login_css() -> None:
     div[data-testid="stForm"] button:hover {{
         transform:translateY(-2px) !important;
         box-shadow:0 8px 28px rgba(24,70,163,0.36) !important;
+    }}
+
+    /* Welcome heading — fixed above the form card */
+    .rp-heading {{
+        position: fixed !important;
+        top: calc(50% - 220px) !important;
+        left: 72.5% !important;
+        transform: translateX(-50%) !important;
+        width: 430px !important;
+        text-align: center !important;
+        z-index: 201 !important;
+        animation: fadeUp 0.5s ease both !important;
+    }}
+
+    /* Footer — fixed bottom centre of right panel */
+    .rp-footer {{
+        position: fixed !important;
+        bottom: 1.4rem !important;
+        left: 72.5% !important;
+        transform: translateX(-50%) !important;
+        font-size: 0.72rem !important;
+        color: #94a3b8 !important;
+        font-family: Inter,sans-serif !important;
+        z-index: 201 !important;
+        white-space: nowrap !important;
     }}
 
     .lp {{
@@ -208,16 +236,16 @@ def _inject_login_css() -> None:
     </div>
     """, unsafe_allow_html=True)
 
-    # Welcome heading rendered inside block-container (right side)
+    # Welcome heading + footer — fixed over the right panel
     st.markdown(
-        '<div style="width:100%;max-width:430px;text-align:center;'
-        'margin-bottom:1.6rem;animation:fadeUp 0.5s ease both;">'
+        '<div class="rp-heading">'
         '<div style="font-size:1.7rem;font-weight:700;color:#0b2668;'
         'letter-spacing:-0.5px;font-family:Inter,sans-serif;">Welcome to Polaris</div>'
         '<div style="font-size:0.84rem;color:#64748b;margin-top:0.45rem;'
         'font-family:Inter,sans-serif;line-height:1.6;">'
         'Sign in to access the Automation Dashboard</div>'
-        '</div>',
+        '</div>'
+        '<div class="rp-footer">Internal Use Only &nbsp;·&nbsp; Version 2.0</div>',
         unsafe_allow_html=True,
     )
 
@@ -251,12 +279,6 @@ def require_login() -> str:
         if auth_status is False:
             st.error("Incorrect username or password. Please try again.")
         if not auth_status:
-            st.markdown(
-                '<div style="text-align:center;font-size:0.72rem;color:#94a3b8;'
-                'margin-top:1rem;font-family:Inter,sans-serif;">'
-                'Internal Use Only &nbsp;·&nbsp; Version 2.0</div>',
-                unsafe_allow_html=True,
-            )
             st.stop()
 
     # Authenticated — render logout button in sidebar
