@@ -27,7 +27,11 @@ COMP_SETTINGS_FILE = DATA_DIR / "completion_settings.json"
 DATA_DIR.mkdir(exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-TRACKER_SHEETS = {"Firmware", "HES", "VEE", "Consumer_App", "Comms", "WFM"}
+# Core sheets that always exist; any additional sheets are auto-discovered
+TRACKER_SHEETS_CORE = {"Firmware", "HES", "VEE", "Consumer_App", "Comms", "WFM"}
+# Sheets to always skip (summary/index tabs)
+TRACKER_SHEETS_SKIP = {"Sheet1", "Sheet2", "Sheet3", "Summary", "Index",
+                       "Instructions", "Template", "Changelog", "README"}
 
 # ── Static metadata not stored in the tracker ──────────────────────────────────
 _PROJECT_META = {
@@ -66,6 +70,29 @@ _SHEET_PID = {
     "HES": "hes", "VEE": "vee",
     "Consumer_App": "consumer_app", "Comms": "comms", "WFM": "wfm",
 }
+
+# Colour palette cycled for auto-discovered sheets
+_AUTO_COLORS = [
+    "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6",
+    "#14b8a6", "#f97316", "#ec4899", "#06b6d4", "#84cc16",
+]
+
+def _sheet_to_pid(sheet: str) -> str:
+    """Convert sheet name to a stable lowercase project id."""
+    return re.sub(r"[^a-z0-9]", "_", sheet.lower()).strip("_")
+
+def _auto_meta(sheet: str, index: int = 0) -> dict:
+    """Generate default metadata for a sheet not in _PROJECT_META."""
+    return {
+        "color":    _AUTO_COLORS[index % len(_AUTO_COLORS)],
+        "priority": "Medium",
+        "team_size": 1,
+        "daily_avg": 0,
+    }
+
+def _auto_name(sheet: str) -> str:
+    """Human-readable project name from sheet name."""
+    return sheet.replace("_", " ").title()
 
 
 # ── Parsing helpers ────────────────────────────────────────────────────────────
@@ -153,10 +180,12 @@ def _parse_and_save_tracker(tracker_path: Path) -> None:
     all_day_plan   = []
     all_completion= []
 
+    auto_index = 0  # for colour cycling of new sheets
     for sheet in xl.sheet_names:
-        if sheet not in TRACKER_SHEETS:
+        # Skip explicitly excluded tabs
+        if sheet in TRACKER_SHEETS_SKIP:
             continue
-
+        # Skip sheets that don't look like project tabs (no recognised sections)
         df = xl.parse(sheet, header=None)
 
         # Locate section boundaries
@@ -164,6 +193,10 @@ def _parse_and_save_tracker(tracker_path: Path) -> None:
         nonaut_row     = _find_row(df, "Non-Automatable Test Cases")
         dayplan_row    = _find_row(df, "Day-by-Day Automation")
         completion_row = _find_row(df, "Project Completion Plan")
+
+        # Skip sheets with none of the expected sections
+        if all(r is None for r in [summary_row, nonaut_row, dayplan_row, completion_row]):
+            continue
 
         na_rows   = _rows_between(df, nonaut_row,     dayplan_row)
         dp_rows   = _rows_between(df, dayplan_row,    completion_row)
@@ -175,6 +208,16 @@ def _parse_and_save_tracker(tracker_path: Path) -> None:
                 all_projects, all_non_auto, all_day_plan, all_completion,
             )
         else:
+            # Auto-register sheet if not in known dicts
+            pid = _SHEET_PID.get(sheet) or _sheet_to_pid(sheet)
+            if pid not in _PROJECT_META:
+                _PROJECT_META[pid] = _auto_meta(sheet, auto_index)
+                auto_index += 1
+            if pid not in _PROJ_NAMES:
+                _PROJ_NAMES[pid] = _auto_name(sheet)
+            if sheet not in _SHEET_PID:
+                _SHEET_PID[sheet] = pid
+
             _parse_single_sheet(
                 sheet, df, summary_row, na_rows, dp_rows, comp_rows,
                 all_projects, all_non_auto, all_day_plan, all_completion,
@@ -218,7 +261,7 @@ def _parse_firmware_sheet(df, summary_row, na_rows, dp_rows, comp_rows,
 
         proj_out.append({
             "id":              pid,
-            "name":            _PROJ_NAMES[pid],
+            "name":            _PROJ_NAMES.get(pid) or _auto_name(sheet),
             "total_cases":     sp["total_cases"],
             "automatable":     sp["automatable"],
             "non_automatable": sp["non_automatable"],
@@ -285,8 +328,8 @@ def _parse_firmware_sheet(df, summary_row, na_rows, dp_rows, comp_rows,
 
 def _parse_single_sheet(sheet, df, summary_row, na_rows, dp_rows, comp_rows,
                          proj_out, na_out, plan_out, comp_out):
-    pid  = _SHEET_PID[sheet]
-    meta = _PROJECT_META[pid]
+    pid  = _SHEET_PID.get(sheet) or _sheet_to_pid(sheet)
+    meta = _PROJECT_META.get(pid) or _auto_meta(sheet)
 
     # Summary row → project numbers
     total = automated = non_auto = 0
@@ -318,7 +361,7 @@ def _parse_single_sheet(sheet, df, summary_row, na_rows, dp_rows, comp_rows,
 
     proj_out.append({
         "id":              pid,
-        "name":            _PROJ_NAMES[pid],
+        "name":            _PROJ_NAMES.get(pid) or _auto_name(sheet),
         "total_cases":     total,
         "automatable":     automatable,
         "non_automatable": non_auto,
@@ -651,8 +694,21 @@ def process_uploaded_file(uploaded_file):
         xl = pd.ExcelFile(uploaded_file)
 
         # ── Detect tracker format ─────────────────────────────────────────────
-        if TRACKER_SHEETS & set(xl.sheet_names):
-            # getvalue() always returns full bytes regardless of read position
+        # Detect tracker: any known core sheet OR any sheet with expected sections
+        xl_sheets = set(xl.sheet_names)
+        is_tracker = bool(TRACKER_SHEETS_CORE & xl_sheets)
+        if not is_tracker:
+            # Check if any sheet has the tracker section markers
+            for sname in xl_sheets - TRACKER_SHEETS_SKIP:
+                try:
+                    _df = xl.parse(sname, header=None)
+                    if _find_row(_df, "Automation Status Summary") is not None:
+                        is_tracker = True
+                        break
+                except Exception:
+                    pass
+
+        if is_tracker:
             if hasattr(uploaded_file, "getvalue"):
                 raw = uploaded_file.getvalue()
             else:
@@ -661,8 +717,10 @@ def process_uploaded_file(uploaded_file):
             with open(TRACKER_FILE, "wb") as f:
                 f.write(raw)
             _parse_and_save_tracker(TRACKER_FILE)
-            sheets_found = sorted(TRACKER_SHEETS & set(xl.sheet_names))
-            return True, f"✅ Tracker imported ({', '.join(sheets_found)}). Dashboard updated from live data."
+            # Report all sheets that were parsed (core + new)
+            parsed = sorted(s for s in xl.sheet_names
+                            if s not in TRACKER_SHEETS_SKIP)
+            return True, f"✅ Tracker imported ({', '.join(parsed)}). Dashboard updated from live data."
 
         # ── Dashboard internal format ─────────────────────────────────────────
         internal_sheets = {"Projects", "Non_Automatable", "Day_Plan", "Completion_Plan"}
