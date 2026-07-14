@@ -116,29 +116,18 @@ footer {{ display:none !important; }}
     margin-left: 45% !important;
     width: 55% !important;
     max-width: none !important;
-    padding: 0 !important;
+    padding: 12vh 3rem 3rem !important;
     box-sizing: border-box !important;
-}}
-
-/* ── All Streamlit vertical wrappers: full-height flex column centered ── */
-.main .block-container > div,
-[data-testid="stVerticalBlockBorderWrapper"],
-[data-testid="stVerticalBlock"] {{
     display: flex !important;
     flex-direction: column !important;
     align-items: center !important;
-    justify-content: center !important;
-    min-height: 100vh !important;
-    gap: 0 !important;
-    padding: 2rem !important;
-    box-sizing: border-box !important;
-    width: 100% !important;
 }}
 
 /* ── Card header (heading + subtitle) ── */
 .card-hdr {{
     width: 430px;
     max-width: 90vw;
+    margin: 0 auto;
     background: #ffffff;
     border: 1px solid #e2eaf8;
     border-bottom: none;
@@ -169,6 +158,7 @@ footer {{ display:none !important; }}
 div[data-testid="stForm"] {{
     width: 430px !important;
     max-width: 90vw !important;
+    margin: 0 auto !important;
     background: #ffffff !important;
     border: 1px solid #e2eaf8 !important;
     border-top: none !important;
@@ -229,6 +219,7 @@ div[data-testid="stForm"] button:hover {{
 .card-ftr {{
     width: 430px;
     max-width: 90vw;
+    margin: 0 auto;
     background: #ffffff;
     border: 1px solid #e2eaf8;
     border-top: 1px solid #f0f4ff;
