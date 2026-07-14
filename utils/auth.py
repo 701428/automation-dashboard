@@ -344,6 +344,19 @@ div[data-testid="stForm"] input::placeholder {{
     opacity:1 !important;
 }}
 
+/* ── Override Chrome/Safari autofill dark background ── */
+div[data-testid="stForm"] input:-webkit-autofill,
+div[data-testid="stForm"] input:-webkit-autofill:hover,
+div[data-testid="stForm"] input:-webkit-autofill:focus,
+div[data-testid="stForm"] input:-webkit-autofill:active {{
+    -webkit-box-shadow:0 0 0 100px #F8FAFF inset !important;
+    box-shadow:0 0 0 100px #F8FAFF inset !important;
+    -webkit-text-fill-color:#0F172A !important;
+    caret-color:#0F172A !important;
+    border-color:#D6E0F5 !important;
+    transition:background-color 9999s ease-in-out 0s !important;
+}}
+
 /* ── Eye toggle: sits flush inside the wrapper, no extra width ── */
 div[data-testid="stForm"] [data-testid="stTextInput"] button {{
     flex:0 0 auto !important;
