@@ -60,7 +60,7 @@ def get_all(v: int):
     df    = enrich_projects(load_projects())
     non   = load_non_automatable()
     plan  = load_day_plan()
-    comp  = load_completion_plan()
+    comp  = load_completion_plan(df)
     return df, non, plan, comp
 
 df_proj, df_non_all, df_plan_all, df_comp = get_all(st.session_state.data_version)
@@ -316,7 +316,6 @@ with tab_plan:
             st.plotly_chart(fig_cum, use_container_width=True, config={"displayModeBar":False}, key="plan_bar")
 
         if is_admin():
-        if is_admin():
             section_title("Edit Day-by-Day Plan")
             edited_plan = st.data_editor(
                 df_plan,
@@ -380,7 +379,24 @@ with tab_comp:
         ])
         st.markdown("")
 
-    # Full completion plan table — filtered to selected project
+    # ── Live metrics derived from project data ─────────────────────────────────
+    section_title("Live Progress")
+    if not df_comp_row.empty:
+        cr = df_comp_row.iloc[0]
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Automatable",  f"{int(cr.get('automatable', 0)):,}")
+        m2.metric("Automated",    f"{int(cr.get('automated',   0)):,}")
+        m3.metric("Pending",      f"{int(cr.get('pending',     0)):,}")
+        m4.metric("Progress",     f"{cr.get('progress_pct', 0):.1f}%")
+
+        st.markdown("")
+        m5, m6, m7, m8 = st.columns(4)
+        m5.metric("Daily Avg (cases/day)", f"{cr.get('daily_avg', 0):.1f}")
+        m6.metric("Duration (days)",       f"{int(cr.get('duration_days', 0))}")
+        m7.metric("Start Date",            str(cr.get("start_date", "TBD")))
+        m8.metric("Expected Completion",   str(cr.get("expected_completion", "TBD")))
+
+    st.markdown("")
     st.dataframe(
         df_comp_row.rename(columns={c: c.replace("_"," ").title() for c in df_comp_row.columns}),
         use_container_width=True, hide_index=True,
@@ -388,34 +404,46 @@ with tab_comp:
 
     if is_admin():
         st.markdown("---")
-        section_title("Edit Completion Plan")
-        edited_comp = st.data_editor(
-            df_comp_row,
-            use_container_width=True, hide_index=True,
-            column_config={
-                "project_id":          st.column_config.TextColumn("Project ID"),
-                "name":                st.column_config.TextColumn("Name"),
-                "total_cases":         st.column_config.NumberColumn("Total Cases", min_value=0, step=1),
-                "automatable":         st.column_config.NumberColumn("Automatable", min_value=0, step=1),
-                "duration_days":       st.column_config.NumberColumn("Duration (Days)", min_value=0, step=1),
-                "daily_avg":           st.column_config.NumberColumn("Daily Avg", min_value=0, step=0.5),
-                "start_date":          st.column_config.TextColumn("Start Date"),
-                "expected_completion": st.column_config.TextColumn("Expected Completion"),
-                "status":              st.column_config.SelectboxColumn(
-                    "Status", options=["Not Started","Started","Blocked","Delayed"]),
-            },
-            key="comp_editor",
-        )
-        if st.button("Save Completion Plan"):
-            try:
-                other = df_comp[df_comp["project_id"] != sel_id]
-                merged = pd.concat([other, edited_comp], ignore_index=True)
-                save_completion_plan(merged)
-                st.session_state.data_version += 1
-                st.success("Completion plan saved!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Save failed: {e}")
+        section_title("Edit Plan Settings")
+        st.caption("Set Daily Avg, Start Date and Status — all other columns update automatically from project data.")
+        if not df_comp_row.empty:
+            cr = df_comp_row.iloc[0]
+            with st.form("comp_form"):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    new_daily = st.number_input(
+                        "Daily Avg (cases/day)",
+                        min_value=0.0, step=0.5,
+                        value=float(cr.get("daily_avg", 0) or 0),
+                    )
+                with c2:
+                    raw_sd = cr.get("start_date", "TBD")
+                    try:
+                        sd_val = pd.to_datetime(raw_sd).date()
+                    except Exception:
+                        sd_val = date.today()
+                    new_start = st.date_input("Start Date", value=sd_val)
+                with c3:
+                    status_opts = ["Not Started", "Started", "On Track", "Blocked", "Delayed", "Completed"]
+                    cur_status  = str(cr.get("status", "Not Started"))
+                    if cur_status not in status_opts:
+                        status_opts.insert(0, cur_status)
+                    new_status = st.selectbox("Status", status_opts,
+                                              index=status_opts.index(cur_status))
+                if st.form_submit_button("Save Plan Settings", use_container_width=True):
+                    try:
+                        # Merge into the full df so save_completion_plan touches all projects
+                        upd = df_comp.copy()
+                        mask = upd["project_id"] == sel_id
+                        upd.loc[mask, "daily_avg"]  = new_daily
+                        upd.loc[mask, "start_date"] = str(new_start)
+                        upd.loc[mask, "status"]     = new_status
+                        save_completion_plan(upd)
+                        st.session_state.data_version += 1
+                        st.success("Plan settings saved — completion date recalculated.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Save failed: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

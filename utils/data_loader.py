@@ -9,6 +9,8 @@ Flow:
 """
 
 import io
+import json
+import math
 import re
 from pathlib import Path
 from typing import Optional
@@ -16,10 +18,11 @@ from typing import Optional
 import pandas as pd
 import numpy as np
 
-DATA_DIR      = Path(__file__).parent.parent / "data"
-MAIN_FILE     = DATA_DIR / "automation_data.xlsx"
-TRACKER_FILE  = DATA_DIR / "Automation tracker.xlsx"
-UPLOAD_DIR    = DATA_DIR / "uploads"
+DATA_DIR          = Path(__file__).parent.parent / "data"
+MAIN_FILE         = DATA_DIR / "automation_data.xlsx"
+TRACKER_FILE      = DATA_DIR / "Automation tracker.xlsx"
+UPLOAD_DIR        = DATA_DIR / "uploads"
+COMP_SETTINGS_FILE = DATA_DIR / "completion_settings.json"
 
 DATA_DIR.mkdir(exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -506,16 +509,121 @@ def save_day_plan(project_id: str, df: pd.DataFrame) -> None:
         updated.to_excel(writer, sheet_name="Day_Plan", index=False)
 
 
-def load_completion_plan() -> pd.DataFrame:
-    ensure_data_file()
-    return pd.read_excel(MAIN_FILE, sheet_name="Completion_Plan")
+def _migrate_comp_settings_from_excel() -> None:
+    """One-time migration: seed JSON store from old Completion_Plan Excel sheet."""
+    if COMP_SETTINGS_FILE.exists():
+        return
+    try:
+        xl = pd.ExcelFile(MAIN_FILE)
+        if "Completion_Plan" not in xl.sheet_names:
+            return
+        df = pd.read_excel(MAIN_FILE, sheet_name="Completion_Plan")
+        settings = {}
+        for _, row in df.iterrows():
+            pid = str(row.get("project_id", ""))
+            if pid:
+                settings[pid] = {
+                    "daily_avg":  float(row.get("daily_avg", 0) or 0),
+                    "start_date": str(row.get("start_date", "TBD")),
+                    "status":     str(row.get("status", "Not Started")),
+                }
+        _save_comp_settings(settings)
+    except Exception:
+        pass
+
+
+def _load_comp_settings() -> dict:
+    """Load editable per-project settings from JSON store."""
+    if COMP_SETTINGS_FILE.exists():
+        try:
+            return json.loads(COMP_SETTINGS_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def _save_comp_settings(settings: dict) -> None:
+    COMP_SETTINGS_FILE.write_text(json.dumps(settings, indent=2, default=str))
+
+
+def load_completion_plan(df_projects: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """
+    Build the Completion Plan by merging live project data with stored
+    user settings (daily_avg, start_date, status).  All other columns
+    (total_cases, automatable, automated, pending, duration_days,
+    expected_completion, progress_pct) are computed dynamically so they
+    always reflect the latest edits to project rows.
+
+    Falls back to the Excel sheet if df_projects is not provided
+    (e.g. called from app.py before projects are loaded).
+    """
+    if df_projects is None:
+        ensure_data_file()
+        try:
+            df_projects = pd.read_excel(MAIN_FILE, sheet_name="Projects")
+        except Exception:
+            return pd.DataFrame()
+
+    _migrate_comp_settings_from_excel()
+    settings = _load_comp_settings()
+    rows = []
+    for _, p in df_projects.iterrows():
+        pid        = str(p.get("id", ""))
+        cfg        = settings.get(pid, {})
+        total      = int(p.get("total_cases",    0) or 0)
+        automatable= int(p.get("automatable",    0) or 0)
+        automated  = int(p.get("automated",      0) or 0)
+        pending    = max(automatable - automated, 0)
+        daily_avg  = float(cfg.get("daily_avg",  0) or 0)
+        start_date = cfg.get("start_date", "TBD")
+        status     = cfg.get("status", "Not Started")
+
+        # Compute duration and expected completion
+        if daily_avg > 0 and pending >= 0:
+            duration_days = math.ceil(pending / daily_avg)
+        else:
+            duration_days = 0
+
+        expected_completion = "TBD"
+        if start_date and start_date != "TBD" and duration_days > 0:
+            try:
+                sd = pd.to_datetime(start_date)
+                expected_completion = (sd + pd.Timedelta(days=duration_days)).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
+        progress_pct = round((automated / automatable * 100) if automatable > 0 else 0, 1)
+
+        rows.append({
+            "project_id":          pid,
+            "name":                str(p.get("name", "")),
+            "total_cases":         total,
+            "automatable":         automatable,
+            "automated":           automated,
+            "pending":             pending,
+            "progress_pct":        progress_pct,
+            "daily_avg":           daily_avg,
+            "start_date":          start_date,
+            "duration_days":       duration_days,
+            "expected_completion": expected_completion,
+            "status":              status,
+        })
+    return pd.DataFrame(rows)
 
 
 def save_completion_plan(df: pd.DataFrame) -> None:
-    ensure_data_file()
-    with pd.ExcelWriter(MAIN_FILE, engine="openpyxl", mode="a",
-                        if_sheet_exists="replace") as writer:
-        df.to_excel(writer, sheet_name="Completion_Plan", index=False)
+    """Persist only editable fields (daily_avg, start_date, status) to JSON store."""
+    settings = _load_comp_settings()
+    for _, row in df.iterrows():
+        pid = str(row.get("project_id", ""))
+        if not pid:
+            continue
+        settings[pid] = {
+            "daily_avg":  float(row.get("daily_avg", 0) or 0),
+            "start_date": str(row.get("start_date", "TBD")),
+            "status":     str(row.get("status", "Not Started")),
+        }
+    _save_comp_settings(settings)
 
 
 def process_uploaded_file(uploaded_file):

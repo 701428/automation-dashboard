@@ -76,7 +76,7 @@ def get_data(v: int):
     df   = enrich_projects(load_projects())
     non  = load_non_automatable()
     plan = load_day_plan()
-    comp = load_completion_plan()
+    comp = load_completion_plan(enrich_projects(load_projects()))
     summ = portfolio_summary(df)
     return df, non, plan, comp, summ
 
