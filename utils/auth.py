@@ -28,12 +28,17 @@ def require_login() -> str:
     """
     auth = load_authenticator()
 
-    name, auth_status, username = auth.login(location="main")
+    # v0.4+: login() returns None; results land in st.session_state
+    auth.login(location="main")
+
+    auth_status = st.session_state.get("authentication_status")
+    username    = st.session_state.get("username", "")
+    name        = st.session_state.get("name", "")
 
     if auth_status is False:
         st.error("Incorrect username or password.")
         st.stop()
-    if auth_status is None:
+    if not auth_status:
         st.stop()
 
     # Logout button in sidebar
@@ -44,9 +49,9 @@ def require_login() -> str:
         cfg = yaml.safe_load(f)
     role = cfg["credentials"]["usernames"].get(username, {}).get("role", "user")
 
-    st.session_state["_role"] = role
+    st.session_state["_role"]     = role
     st.session_state["_username"] = username
-    st.session_state["_name"] = name
+    st.session_state["_name"]     = name
     return role
 
 
