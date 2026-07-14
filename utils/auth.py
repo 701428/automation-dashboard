@@ -26,99 +26,122 @@ def _inject_login_css() -> None:
     section[data-testid="stSidebar"] {{ display: none !important; }}
 
     /* ── Full-page gradient background ── */
-    .stApp {{ background: linear-gradient(135deg,#dce8fb 0%,#eef4ff 55%,#ddf0f8 100%) !important; }}
-    [data-testid="stHeader"] {{ background: transparent !important; box-shadow: none !important; }}
-
-    /* ── Centre & constrain main block ── */
-    .main .block-container {{
-        max-width: 460px !important;
-        margin: 0 auto !important;
-        padding-top: 6vh !important;
-        padding-bottom: 2rem !important;
+    .stApp {{
+        background: linear-gradient(160deg, #dce8fb 0%, #eef3ff 50%, #d8e8f7 100%) !important;
+    }}
+    [data-testid="stHeader"] {{
+        background: transparent !important;
+        box-shadow: none !important;
     }}
 
-    /* ── Card: wraps the HTML header + the Streamlit form ── */
+    /* ── Main block: wide card layout ── */
+    .main .block-container {{
+        max-width: 860px !important;
+        margin: 0 auto !important;
+        padding: 8vh 2rem 2rem !important;
+    }}
+
+    /* ── Card top: logo + title + description ── */
     .login-card-top {{
-        background: #fff;
-        border: 1px solid #dbe4f5;
+        background: #ffffff;
+        border: 1px solid #dde6f5;
         border-bottom: none;
-        border-radius: 20px 20px 0 0;
-        padding: 2.6rem 2.4rem 1.8rem;
-        box-shadow: 0 8px 40px rgba(10,54,144,0.11);
+        border-radius: 16px 16px 0 0;
+        padding: 3rem 3rem 2rem;
+        box-shadow: 0 4px 32px rgba(10,54,144,0.09);
     }}
     .login-logo {{
-        display:block; margin:0 auto 1.2rem; height:40px;
+        display: block;
+        margin: 0 auto 1.3rem;
+        height: 38px;
     }}
     .login-title {{
-        text-align:center; font-size:1.45rem; font-weight:700;
-        color:#0A3690; margin:0 0 0.3rem; letter-spacing:-0.3px;
+        text-align: center;
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #0A3690;
+        margin: 0 0 0.4rem;
+        letter-spacing: -0.3px;
     }}
     .login-sub {{
-        text-align:center; font-size:0.8rem; color:#64748b;
-        margin:0 0 1.5rem; line-height:1.65;
-    }}
-    .login-divider {{
-        border:none; border-top:1px solid #e4ecfa; margin:0;
+        text-align: center;
+        font-size: 0.82rem;
+        color: #64748b;
+        margin: 0;
+        line-height: 1.7;
     }}
 
-    /* ── Form bottom half of card ── */
+    /* ── Form: bottom half of same card ── */
     div[data-testid="stForm"] {{
-        background: #fff !important;
-        border: 1px solid #dbe4f5 !important;
+        background: #ffffff !important;
+        border: 1px solid #dde6f5 !important;
         border-top: none !important;
-        border-radius: 0 0 20px 20px !important;
-        box-shadow: 0 8px 40px rgba(10,54,144,0.11) !important;
-        padding: 1.6rem 2.4rem 2rem !important;
+        border-radius: 0 0 16px 16px !important;
+        box-shadow: 0 4px 32px rgba(10,54,144,0.09) !important;
+        padding: 2rem 3rem 2.5rem !important;
+        margin-top: 0 !important;
     }}
-    /* Hide the default "Login" heading inside the form */
+    /* Hide auto-generated "Login" heading */
     div[data-testid="stForm"] h1,
     div[data-testid="stForm"] h2,
     div[data-testid="stForm"] h3 {{ display: none !important; }}
 
-    /* Input fields */
-    div[data-testid="stForm"] input {{
+    /* Labels */
+    div[data-testid="stForm"] label {{
+        font-size: 0.85rem !important;
+        font-weight: 500 !important;
+        color: #374151 !important;
+    }}
+    /* Inputs */
+    div[data-testid="stForm"] input[type="text"],
+    div[data-testid="stForm"] input[type="password"] {{
         border-radius: 8px !important;
-        border: 1.5px solid #dbe4f5 !important;
+        border: 1.5px solid #d1daf0 !important;
+        background: #f5f8ff !important;
         font-size: 0.9rem !important;
-        padding: 0.5rem 0.75rem !important;
+        padding: 0.55rem 0.8rem !important;
+        transition: border 0.15s !important;
     }}
     div[data-testid="stForm"] input:focus {{
         border-color: #0A3690 !important;
-        box-shadow: 0 0 0 3px rgba(10,54,144,0.1) !important;
+        background: #fff !important;
+        box-shadow: 0 0 0 3px rgba(10,54,144,0.08) !important;
     }}
-    /* Submit button — full width Polaris blue */
+    /* Login button — small, left-aligned, Polaris blue */
     div[data-testid="stForm"] button {{
         background: #0A3690 !important;
-        color: #fff !important;
-        border-radius: 8px !important;
-        width: 100% !important;
-        padding: 0.55rem !important;
-        font-weight: 600 !important;
-        font-size: 0.95rem !important;
+        color: #ffffff !important;
         border: none !important;
-        margin-top: 0.4rem !important;
+        border-radius: 8px !important;
+        padding: 0.48rem 1.6rem !important;
+        font-size: 0.9rem !important;
+        font-weight: 600 !important;
+        width: auto !important;
+        cursor: pointer !important;
         transition: background 0.15s !important;
     }}
     div[data-testid="stForm"] button:hover {{
         background: #0c44b0 !important;
     }}
 
-    /* Footer note */
+    /* ── Footer below card ── */
     .login-footer {{
-        text-align:center; font-size:0.72rem; color:#94a3b8; margin-top:1.2rem;
+        text-align: center;
+        font-size: 0.73rem;
+        color: #94a3b8;
+        margin-top: 1.4rem;
+        letter-spacing: 0.2px;
     }}
     </style>
 
     <div class="login-card-top">
       <img class="login-logo"
            src="data:image/svg+xml;base64,{logo}"
-           alt="Polaris Grids"/>
+           alt="Polaris Grids" />
       <div class="login-title">Automation Dashboard</div>
       <div class="login-sub">
-        Real-time test automation tracker for Meter Firmware,<br>
-        HES, VEE, WFM and allied Polaris projects.
+        Real-time test automation tracker for Meter Firmware, HES, VEE, WFM and allied Polaris projects.
       </div>
-      <hr class="login-divider"/>
     </div>
     """, unsafe_allow_html=True)
 
