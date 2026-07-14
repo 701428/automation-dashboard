@@ -15,89 +15,110 @@ def _logo_b64() -> str:
     return base64.b64encode(_LOGO_FILE.read_bytes()).decode()
 
 
-def _inject_login_ui() -> None:
-    """Inject CSS + branded header above the login form."""
+def _inject_login_css() -> None:
+    """Inject full-page CSS for the login screen."""
     logo = _logo_b64()
     st.markdown(f"""
     <style>
-    /* Hide sidebar nav links on login screen */
-    [data-testid="stSidebarNav"] {{ display: none !important; }}
-    [data-testid="stSidebarHeader"] {{ display: none !important; }}
+    /* ── Hide sidebar on login ── */
+    [data-testid="stSidebarNav"],
+    [data-testid="stSidebarHeader"],
     section[data-testid="stSidebar"] {{ display: none !important; }}
 
-    /* Full-page centred layout */
-    .login-wrap {{
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 3rem 1rem 1rem;
-    }}
-    .login-card {{
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 16px;
-        box-shadow: 0 4px 32px rgba(10,54,144,0.08);
-        padding: 2.5rem 2.5rem 2rem;
-        max-width: 420px;
-        width: 100%;
-    }}
-    .login-logo {{
-        display: block;
-        margin: 0 auto 1.2rem;
-        height: 36px;
-    }}
-    .login-title {{
-        text-align: center;
-        font-size: 1.45rem;
-        font-weight: 700;
-        color: #0A3690;
-        margin: 0 0 0.3rem;
-        letter-spacing: -0.3px;
-    }}
-    .login-sub {{
-        text-align: center;
-        font-size: 0.82rem;
-        color: #64748b;
-        margin: 0 0 1.6rem;
-        line-height: 1.5;
-    }}
-    .login-divider {{
-        border: none;
-        border-top: 1px solid #e2e8f0;
-        margin: 1.4rem 0 1.2rem;
-    }}
-    .login-footer {{
-        text-align: center;
-        font-size: 0.75rem;
-        color: #94a3b8;
-        margin-top: 1.5rem;
+    /* ── Full-page gradient background ── */
+    .stApp {{ background: linear-gradient(135deg,#dce8fb 0%,#eef4ff 55%,#ddf0f8 100%) !important; }}
+    [data-testid="stHeader"] {{ background: transparent !important; box-shadow: none !important; }}
+
+    /* ── Centre & constrain main block ── */
+    .main .block-container {{
+        max-width: 460px !important;
+        margin: 0 auto !important;
+        padding-top: 6vh !important;
+        padding-bottom: 2rem !important;
     }}
 
-    /* Style the stAuth form to sit inside card area */
-    div[data-testid="stForm"] {{
-        border: none !important;
-        padding: 0 !important;
-        background: transparent !important;
+    /* ── Card: wraps the HTML header + the Streamlit form ── */
+    .login-card-top {{
+        background: #fff;
+        border: 1px solid #dbe4f5;
+        border-bottom: none;
+        border-radius: 20px 20px 0 0;
+        padding: 2.6rem 2.4rem 1.8rem;
+        box-shadow: 0 8px 40px rgba(10,54,144,0.11);
     }}
-    div[data-testid="stForm"] > div {{
-        padding: 0 !important;
+    .login-logo {{
+        display:block; margin:0 auto 1.2rem; height:40px;
+    }}
+    .login-title {{
+        text-align:center; font-size:1.45rem; font-weight:700;
+        color:#0A3690; margin:0 0 0.3rem; letter-spacing:-0.3px;
+    }}
+    .login-sub {{
+        text-align:center; font-size:0.8rem; color:#64748b;
+        margin:0 0 1.5rem; line-height:1.65;
+    }}
+    .login-divider {{
+        border:none; border-top:1px solid #e4ecfa; margin:0;
+    }}
+
+    /* ── Form bottom half of card ── */
+    div[data-testid="stForm"] {{
+        background: #fff !important;
+        border: 1px solid #dbe4f5 !important;
+        border-top: none !important;
+        border-radius: 0 0 20px 20px !important;
+        box-shadow: 0 8px 40px rgba(10,54,144,0.11) !important;
+        padding: 1.6rem 2.4rem 2rem !important;
+    }}
+    /* Hide the default "Login" heading inside the form */
+    div[data-testid="stForm"] h1,
+    div[data-testid="stForm"] h2,
+    div[data-testid="stForm"] h3 {{ display: none !important; }}
+
+    /* Input fields */
+    div[data-testid="stForm"] input {{
+        border-radius: 8px !important;
+        border: 1.5px solid #dbe4f5 !important;
+        font-size: 0.9rem !important;
+        padding: 0.5rem 0.75rem !important;
+    }}
+    div[data-testid="stForm"] input:focus {{
+        border-color: #0A3690 !important;
+        box-shadow: 0 0 0 3px rgba(10,54,144,0.1) !important;
+    }}
+    /* Submit button — full width Polaris blue */
+    div[data-testid="stForm"] button {{
+        background: #0A3690 !important;
+        color: #fff !important;
+        border-radius: 8px !important;
+        width: 100% !important;
+        padding: 0.55rem !important;
+        font-weight: 600 !important;
+        font-size: 0.95rem !important;
+        border: none !important;
+        margin-top: 0.4rem !important;
+        transition: background 0.15s !important;
+    }}
+    div[data-testid="stForm"] button:hover {{
+        background: #0c44b0 !important;
+    }}
+
+    /* Footer note */
+    .login-footer {{
+        text-align:center; font-size:0.72rem; color:#94a3b8; margin-top:1.2rem;
     }}
     </style>
 
-    <div class="login-wrap">
-      <div class="login-card">
-        <img class="login-logo"
-             src="data:image/svg+xml;base64,{logo}"
-             alt="Polaris Grids" />
-        <div class="login-title">Automation Dashboard</div>
-        <div class="login-sub">
-          Real-time test automation portfolio tracker for<br>
-          Meter Firmware, HES, VEE and allied projects.<br>
-          <strong style="color:#0A3690;">Sign in to continue.</strong>
-        </div>
-        <hr class="login-divider"/>
+    <div class="login-card-top">
+      <img class="login-logo"
+           src="data:image/svg+xml;base64,{logo}"
+           alt="Polaris Grids"/>
+      <div class="login-title">Automation Dashboard</div>
+      <div class="login-sub">
+        Real-time test automation tracker for Meter Firmware,<br>
+        HES, VEE, WFM and allied Polaris projects.
       </div>
+      <hr class="login-divider"/>
     </div>
     """, unsafe_allow_html=True)
 
@@ -124,20 +145,15 @@ def require_login() -> str:
     auth_status = st.session_state.get("authentication_status")
 
     if not auth_status:
-        # Inject branding above the login form
-        _inject_login_ui()
-
-        # Render the auth form in a narrow centred column
-        _, col, _ = st.columns([1, 1.6, 1])
-        with col:
-            auth.login(location="main")
+        _inject_login_css()
+        auth.login(location="main")
 
         auth_status = st.session_state.get("authentication_status")
         if auth_status is False:
-            _, col, _ = st.columns([1, 1.6, 1])
-            with col:
-                st.error("Incorrect username or password. Please try again.")
+            st.error("Incorrect username or password. Please try again.")
         if not auth_status:
+            st.markdown('<div class="login-footer">Polaris Grids · Internal Use Only</div>',
+                        unsafe_allow_html=True)
             st.stop()
 
     # Authenticated — render logout button in sidebar
