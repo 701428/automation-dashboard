@@ -28,7 +28,26 @@ def require_login() -> str:
     """
     auth = load_authenticator()
 
-    # v0.4+: login() returns None; results land in st.session_state
+    auth_status = st.session_state.get("authentication_status")
+
+    # Already authenticated — just render logout and return
+    if auth_status:
+        with st.sidebar:
+            if st.button("Logout", use_container_width=True):
+                for key in ["authentication_status", "username", "name",
+                            "_role", "_username", "_name"]:
+                    st.session_state.pop(key, None)
+                st.rerun()
+        username = st.session_state.get("username", "")
+        with open(_CREDS_FILE) as f:
+            cfg = yaml.safe_load(f)
+        role = cfg["credentials"]["usernames"].get(username, {}).get("role", "user")
+        st.session_state["_role"]     = role
+        st.session_state["_username"] = username
+        st.session_state["_name"]     = st.session_state.get("name", "")
+        return role
+
+    # Not authenticated — show login form
     auth.login(location="main")
 
     auth_status = st.session_state.get("authentication_status")
@@ -41,17 +60,21 @@ def require_login() -> str:
     if not auth_status:
         st.stop()
 
-    # Logout button in sidebar
-    auth.logout("Logout", location="sidebar")
-
-    # Read role from credentials file
+    # First successful login — set role and show logout
     with open(_CREDS_FILE) as f:
         cfg = yaml.safe_load(f)
     role = cfg["credentials"]["usernames"].get(username, {}).get("role", "user")
-
     st.session_state["_role"]     = role
     st.session_state["_username"] = username
     st.session_state["_name"]     = name
+
+    with st.sidebar:
+        if st.button("Logout", use_container_width=True):
+            for key in ["authentication_status", "username", "name",
+                        "_role", "_username", "_name"]:
+                st.session_state.pop(key, None)
+            st.rerun()
+
     return role
 
 
