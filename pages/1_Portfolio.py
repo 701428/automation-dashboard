@@ -39,22 +39,23 @@ with st.sidebar:
     st.divider()
     if is_admin():
         st.caption("DATA MANAGEMENT")
-    uploaded = st.file_uploader(
-        "Upload Tracker / Data", type=["xlsx","xls","csv"],
-        label_visibility="collapsed",
-        help="Upload 'Automation tracker.xlsx' to refresh all project data",
-        key=f"uploader_{st.session_state.uploader_key}",
-    )
-    if uploaded:
-        with st.spinner("Processing tracker…"):
-            ok, msg = process_uploaded_file(uploaded)
-        if ok:
-            st.session_state.data_version += 1
-            st.session_state.uploader_key += 1
-            st.session_state["_upload_ok_msg"] = msg
-            st.rerun()
-        else:
-            st.error(msg)
+        uploaded = st.file_uploader(
+            "Upload Tracker / Data", type=["xlsx","xls","csv"],
+            label_visibility="collapsed",
+            help="Upload 'Automation tracker.xlsx' to refresh all project data",
+            key=f"uploader_{st.session_state.uploader_key}",
+        )
+        if uploaded:
+            with st.spinner("Processing tracker…"):
+                ok, msg = process_uploaded_file(uploaded)
+            if ok:
+                st.session_state.data_version += 1
+                st.session_state.uploader_key += 1
+                st.session_state["_upload_ok_msg"] = msg
+                st.rerun()
+            else:
+                st.error(msg)
+        st.divider()
     st.download_button("Template", get_template_excel(), "automation_template.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        use_container_width=True)

@@ -41,14 +41,16 @@ with st.sidebar:
     st.caption(f"Logged in as **{current_user()}** ({'Admin' if is_admin() else 'Viewer'})")
     st.session_state.dark_mode = st.toggle("Dark Mode", value=st.session_state.dark_mode)
     st.divider()
-    st.caption("DATA MANAGEMENT")
-    uploaded = st.file_uploader("Upload Data", type=["xlsx","xls","csv"], label_visibility="collapsed")
-    if uploaded:
-        ok, msg = process_uploaded_file(uploaded)
-        (st.success if ok else st.error)(msg)
-        if ok:
-            st.session_state.data_version += 1
-            st.rerun()
+    if is_admin():
+        st.caption("DATA MANAGEMENT")
+        uploaded = st.file_uploader("Upload Data", type=["xlsx","xls","csv"], label_visibility="collapsed")
+        if uploaded:
+            ok, msg = process_uploaded_file(uploaded)
+            (st.success if ok else st.error)(msg)
+            if ok:
+                st.session_state.data_version += 1
+                st.rerun()
+        st.divider()
     st.download_button("Template", get_template_excel(), "automation_template.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        use_container_width=True)
@@ -315,8 +317,8 @@ with tab_plan:
             )
             st.plotly_chart(fig_cum, use_container_width=True, config={"displayModeBar":False}, key="plan_bar")
 
+        section_title("Day-by-Day Plan" if not is_admin() else "Edit Day-by-Day Plan")
         if is_admin():
-            section_title("Edit Day-by-Day Plan")
             edited_plan = st.data_editor(
                 df_plan,
                 use_container_width=True, num_rows="dynamic", hide_index=True,
@@ -359,6 +361,8 @@ with tab_plan:
                     f"{sel_id}_plan.csv", "text/csv",
                     use_container_width=True,
                 )
+        else:
+            st.dataframe(df_plan, use_container_width=True, hide_index=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
