@@ -367,43 +367,33 @@ with tab_plan:
 with tab_comp:
     section_title("Project Completion Plan")
 
-    # Summary cards from completion plan
-    if not df_comp_row.empty:
-        r = df_comp_row.iloc[0]
-        kpi_row([
-            {"label": "Total Cases",    "value": f"{int(r.get('total_cases',0)):,}"},
-            {"label": "Automatable",    "value": f"{int(r.get('automatable',0)):,}"},
-            {"label": "Duration",       "value": f"{r.get('duration_days','TBD')} days"},
-            {"label": "Daily Avg",      "value": f"~{r.get('daily_avg','TBD')} cases/day"},
-            {"label": "Expected Done",  "value": str(r.get("expected_completion","TBD"))},
-        ])
-        st.markdown("")
-
-    # ── Live metrics derived from project data ─────────────────────────────────
-    section_title("Live Progress")
     if not df_comp_row.empty:
         cr = df_comp_row.iloc[0]
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Automatable",  f"{int(cr.get('automatable', 0)):,}")
-        m2.metric("Automated",    f"{int(cr.get('automated',   0)):,}")
-        m3.metric("Pending",      f"{int(cr.get('pending',     0)):,}")
-        m4.metric("Progress",     f"{cr.get('progress_pct', 0):.1f}%")
+        # Row 1 — live progress
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Total Cases",  f"{int(cr.get('total_cases',  0)):,}")
+        m2.metric("Automatable",  f"{int(cr.get('automatable',  0)):,}")
+        m3.metric("Automated",    f"{int(cr.get('automated',    0)):,}")
+        m4.metric("Pending",      f"{int(cr.get('pending',      0)):,}")
+        m5.metric("Progress",     f"{cr.get('progress_pct', 0):.1f}%")
 
         st.markdown("")
-        m5, m6, m7, m8 = st.columns(4)
-        m5.metric("Daily Avg (cases/day)", f"{cr.get('daily_avg', 0):.1f}")
-        m6.metric("Duration (days)",       f"{int(cr.get('duration_days', 0))}")
-        m7.metric("Start Date",            str(cr.get("start_date", "TBD")))
-        m8.metric("Expected Completion",   str(cr.get("expected_completion", "TBD")))
 
-    st.markdown("")
-    st.dataframe(
-        df_comp_row.rename(columns={c: c.replace("_"," ").title() for c in df_comp_row.columns}),
-        use_container_width=True, hide_index=True,
-    )
+        # Row 2 — plan timeline
+        m6, m7, m8, m9 = st.columns(4)
+        m6.metric("Daily Avg",           f"{cr.get('daily_avg', 0):.1f} cases/day")
+        m7.metric("Duration",            f"{int(cr.get('duration_days', 0))} days")
+        m8.metric("Start Date",          str(cr.get("start_date", "TBD")))
+        m9.metric("Expected Completion", str(cr.get("expected_completion", "TBD")))
+
+        st.markdown("")
+        pct = float(cr.get("progress_pct", 0))
+        st.progress(min(pct / 100, 1.0),
+                    text=f"{pct:.1f}% complete · Status: **{cr.get('status', '—')}**")
+
+    st.divider()
 
     if is_admin():
-        st.markdown("---")
         section_title("Edit Plan Settings")
         st.caption("Set Daily Avg, Start Date and Status — all other columns update automatically from project data.")
         if not df_comp_row.empty:
