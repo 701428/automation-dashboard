@@ -29,6 +29,20 @@ from utils.exports      import export_excel, export_pdf_html
 from components.kpi_cards import kpi_row
 from components.gantt     import sprint_gantt
 
+
+def _clean_date_display(val: str) -> str:
+    """Normalize a date string for display: strip time, fix obvious year typos."""
+    if not val or str(val).strip().lower() in ("", "nan", "tbd", "none"):
+        return str(val)
+    s = str(val).strip()
+    try:
+        ts = pd.to_datetime(s, errors="coerce")
+        if pd.notna(ts) and 2000 <= ts.year <= 2100:
+            return ts.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    return s
+
 if "dark_mode"        not in st.session_state: st.session_state.dark_mode        = False
 if "data_version"     not in st.session_state: st.session_state.data_version     = 0
 if "selected_project" not in st.session_state: st.session_state.selected_project = "1p"
@@ -98,7 +112,7 @@ with col_hdr:
     st.caption(
         f"{int(row['total_cases']):,} total · {auto_tgt:,} automatable · "
         f"{non_cnt:,} non-automatable · "
-        f"Start: {row.get('start_date','')} → Target: {row.get('target_date','')}"
+        f"Start: {row.get('start_date','')} → Target: {_clean_date_display(row.get('target_date',''))}"
     )
 with col_badge:
     daily_avg = float(row.get("daily_avg", 0))

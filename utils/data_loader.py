@@ -124,7 +124,7 @@ def _parse_date(val) -> Optional[str]:
         if isinstance(val, float) and val != val:
             return None
         ts = pd.to_datetime(val, errors="coerce")
-        if pd.notna(ts):
+        if pd.notna(ts) and 2000 <= ts.year <= 2100:
             return ts.date().isoformat()
     except Exception:
         pass
@@ -229,6 +229,10 @@ def _parse_and_save_tracker(tracker_path: Path) -> None:
         pd.DataFrame(all_non_auto).to_excel(   writer, sheet_name="Non_Automatable", index=False)
         pd.DataFrame(all_day_plan).to_excel(   writer, sheet_name="Day_Plan",        index=False)
         pd.DataFrame(all_completion).to_excel( writer, sheet_name="Completion_Plan", index=False)
+
+    # Upsert completion settings for any new project IDs from this upload.
+    # Existing project settings are preserved; only missing IDs are seeded.
+    _upsert_comp_settings_from_parsed(all_completion)
 
 
 def _parse_firmware_sheet(df, summary_row, na_rows, dp_rows, comp_rows,
@@ -552,6 +556,46 @@ def save_day_plan(project_id: str, df: pd.DataFrame) -> None:
         updated.to_excel(writer, sheet_name="Day_Plan", index=False)
 
 
+def _upsert_comp_settings_from_parsed(comp_rows: list) -> None:
+    """Upsert completion_settings.json from parsed rows.
+    For new IDs: seed from Excel. For existing IDs: update expected_completion
+    from Excel but preserve user-editable fields (daily_avg, start_date, status)."""
+    settings = _load_comp_settings()
+    changed = False
+    for row in comp_rows:
+        pid = str(row.get("project_id", "")).strip()
+        if not pid:
+            continue
+        ec_raw = str(row.get("expected_completion", "") or "")
+        ec = "TBD"
+        if ec_raw.lower() not in ("nan", "none", "tbd", ""):
+            try:
+                ec = pd.to_datetime(ec_raw).strftime("%Y-%m-%d")
+            except Exception:
+                pass  # leave as TBD if unparseable
+        if pid in settings:
+            # Only refresh expected_completion from Excel when it's a real date;
+            # never overwrite a good stored date with TBD.
+            if ec != "TBD" and settings[pid].get("expected_completion") != ec:
+                settings[pid]["expected_completion"] = ec
+                changed = True
+        else:
+            daily_avg  = float(row.get("daily_avg",  0) or 0)
+            start_date = str(row.get("start_date",   "TBD") or "TBD")
+            status     = str(row.get("status",       "Not Started") or "Not Started")
+            if status.lower() in ("nan", "none", ""):
+                status = "Not Started"
+            settings[pid] = {
+                "daily_avg": daily_avg,
+                "start_date": start_date,
+                "status": status,
+                "expected_completion": ec,
+            }
+            changed = True
+    if changed:
+        _save_comp_settings(settings)
+
+
 def _migrate_comp_settings_from_excel() -> None:
     """One-time migration: seed JSON store from old Completion_Plan Excel sheet."""
     if COMP_SETTINGS_FILE.exists():
@@ -621,19 +665,32 @@ def load_completion_plan(df_projects: Optional[pd.DataFrame] = None) -> pd.DataF
         start_date = cfg.get("start_date", "TBD")
         status     = cfg.get("status", "Not Started")
 
-        # Compute duration and expected completion
-        if daily_avg > 0 and pending >= 0:
-            duration_days = math.ceil(pending / daily_avg)
-        else:
-            duration_days = 0
+        # Use Excel-supplied expected_completion if stored; derive duration from it.
+        # Fall back to computing from pending/daily_avg only when not available.
+        stored_ec = cfg.get("expected_completion", "TBD") or "TBD"
+        if stored_ec.lower() in ("nan", "none", ""):
+            stored_ec = "TBD"
 
         expected_completion = "TBD"
-        if start_date and start_date != "TBD" and duration_days > 0:
+        duration_days = 0
+
+        if stored_ec != "TBD" and start_date and start_date != "TBD":
             try:
                 sd = pd.to_datetime(start_date)
-                expected_completion = (sd + pd.Timedelta(days=duration_days)).strftime("%Y-%m-%d")
+                ec = pd.to_datetime(stored_ec)
+                duration_days = max(0, (ec - sd).days)
+                expected_completion = ec.strftime("%Y-%m-%d")
             except Exception:
                 pass
+
+        if expected_completion == "TBD" and daily_avg > 0 and pending > 0:
+            duration_days = math.ceil(pending / daily_avg)
+            if start_date and start_date != "TBD":
+                try:
+                    sd = pd.to_datetime(start_date)
+                    expected_completion = (sd + pd.Timedelta(days=duration_days)).strftime("%Y-%m-%d")
+                except Exception:
+                    pass
 
         progress_pct = round((automated / automatable * 100) if automatable > 0 else 0, 1)
 
@@ -655,16 +712,18 @@ def load_completion_plan(df_projects: Optional[pd.DataFrame] = None) -> pd.DataF
 
 
 def save_completion_plan(df: pd.DataFrame) -> None:
-    """Persist only editable fields (daily_avg, start_date, status) to JSON store."""
+    """Persist editable fields to JSON store, preserving expected_completion from Excel."""
     settings = _load_comp_settings()
     for _, row in df.iterrows():
         pid = str(row.get("project_id", ""))
         if not pid:
             continue
+        existing_ec = settings.get(pid, {}).get("expected_completion", "TBD")
         settings[pid] = {
-            "daily_avg":  float(row.get("daily_avg", 0) or 0),
-            "start_date": str(row.get("start_date", "TBD")),
-            "status":     str(row.get("status", "Not Started")),
+            "daily_avg":           float(row.get("daily_avg", 0) or 0),
+            "start_date":          str(row.get("start_date", "TBD")),
+            "status":              str(row.get("status", "Not Started")),
+            "expected_completion": existing_ec,
         }
     _save_comp_settings(settings)
 
