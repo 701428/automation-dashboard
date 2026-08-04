@@ -14,7 +14,7 @@ st.set_page_config(
 import pandas as pd
 from datetime import date
 
-from utils.auth        import require_login, current_user
+from utils.auth        import require_login, current_user, is_admin
 from utils.styles      import inject_css, sidebar_logo, page_header, section_title, COLORS
 from utils.data_loader import (
     ensure_data_file, load_projects, load_non_automatable,
@@ -60,26 +60,27 @@ with st.sidebar:
     st.divider()
     st.session_state.dark_mode = st.toggle("Dark Mode", value=st.session_state.dark_mode)
     st.divider()
-    st.caption("DATA MANAGEMENT")
-    uploaded = st.file_uploader(
-        "Upload Tracker / Data", type=["xlsx","xls","csv"],
-        label_visibility="collapsed",
-        help="Upload 'Automation tracker.xlsx' to refresh all project data",
-        key=f"uploader_{st.session_state.uploader_key}",
-    )
-    if uploaded:
-        with st.spinner("Processing tracker…"):
-            ok, msg = process_uploaded_file(uploaded)
-        if ok:
-            st.session_state.data_version += 1
-            st.session_state.uploader_key += 1
-            st.session_state["_upload_ok_msg"] = msg
-            st.rerun()
-        else:
-            st.error(msg)
-    st.download_button("Template", get_template_excel(), "automation_template.xlsx",
-                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                       use_container_width=True)
+    if is_admin():
+        st.caption("DATA MANAGEMENT")
+        uploaded = st.file_uploader(
+            "Upload Tracker / Data", type=["xlsx","xls","csv"],
+            label_visibility="collapsed",
+            help="Upload 'Automation tracker.xlsx' to refresh all project data",
+            key=f"uploader_{st.session_state.uploader_key}",
+        )
+        if uploaded:
+            with st.spinner("Processing tracker…"):
+                ok, msg = process_uploaded_file(uploaded)
+            if ok:
+                st.session_state.data_version += 1
+                st.session_state.uploader_key += 1
+                st.session_state["_upload_ok_msg"] = msg
+                st.rerun()
+            else:
+                st.error(msg)
+        st.download_button("Template", get_template_excel(), "automation_template.xlsx",
+                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           use_container_width=True)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -173,15 +174,19 @@ st.plotly_chart(project_gantt(df_proj, st.session_state.dark_mode),
 
 # ── Editable progress table ────────────────────────────────────────────────────
 section_title("Update Automation Progress")
-st.caption("Edit **Automated** and **In Progress** counts then click Save.")
+_admin = is_admin()
+
+if not _admin:
+    st.info("👁️ View-only mode — you do not have permission to edit data.")
 
 edit_cols = ["id","name","total_cases","automatable","non_automatable","automated","in_progress","status"]
 avail     = [c for c in edit_cols if c in df_proj.columns]
+editable  = ("automated","in_progress","status") if _admin else ()
 edited    = st.data_editor(
     df_proj[avail],
     use_container_width=True,
     hide_index=True,
-    disabled=[c for c in avail if c not in ("automated","in_progress","status")],
+    disabled=[c for c in avail if c not in editable],
     column_config={
         "automated":   st.column_config.NumberColumn("Automated",   min_value=0, step=1),
         "in_progress": st.column_config.NumberColumn("In Progress", min_value=0, step=1),
@@ -191,26 +196,27 @@ edited    = st.data_editor(
     key="portfolio_editor",
 )
 
-col_s1, col_s2, _ = st.columns([1, 1, 4])
-with col_s1:
-    if st.button("Save Changes", use_container_width=True):
-        try:
-            full = load_projects()
-            for _, er in edited.iterrows():
-                pid = er["id"]
-                for col in ["automated","in_progress","status"]:
-                    if col in er and col in full.columns:
-                        full.loc[full["id"]==pid, col] = er[col]
-            save_projects(full)
+if _admin:
+    col_s1, col_s2, _ = st.columns([1, 1, 4])
+    with col_s1:
+        if st.button("Save Changes", use_container_width=True):
+            try:
+                full = load_projects()
+                for _, er in edited.iterrows():
+                    pid = er["id"]
+                    for col in ["automated","in_progress","status"]:
+                        if col in er and col in full.columns:
+                            full.loc[full["id"]==pid, col] = er[col]
+                save_projects(full)
+                st.session_state.data_version += 1
+                st.success("Saved!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Save failed: {e}")
+    with col_s2:
+        if st.button("Reset to Defaults", use_container_width=True):
+            from utils.data_loader import MAIN_FILE
+            if MAIN_FILE.exists():
+                MAIN_FILE.unlink()
             st.session_state.data_version += 1
-            st.success("Saved!")
             st.rerun()
-        except Exception as e:
-            st.error(f"Save failed: {e}")
-with col_s2:
-    if st.button("Reset to Defaults", use_container_width=True):
-        from utils.data_loader import MAIN_FILE
-        if MAIN_FILE.exists():
-            MAIN_FILE.unlink()
-        st.session_state.data_version += 1
-        st.rerun()

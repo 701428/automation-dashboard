@@ -64,17 +64,18 @@ with st.sidebar:
     st.divider()
     st.session_state.dark_mode = st.toggle("Dark Mode", value=st.session_state.dark_mode)
     st.divider()
-    st.caption("DATA MANAGEMENT")
-    uploaded = st.file_uploader("Upload Data", type=["xlsx","xls","csv"], label_visibility="collapsed")
-    if uploaded:
-        ok, msg = process_uploaded_file(uploaded)
-        (st.success if ok else st.error)(msg)
-        if ok:
-            st.session_state.data_version += 1
-            st.rerun()
-    st.download_button("Template", get_template_excel(), "automation_template.xlsx",
-                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                       use_container_width=True)
+    if is_admin():
+        st.caption("DATA MANAGEMENT")
+        uploaded = st.file_uploader("Upload Data", type=["xlsx","xls","csv"], label_visibility="collapsed")
+        if uploaded:
+            ok, msg = process_uploaded_file(uploaded)
+            (st.success if ok else st.error)(msg)
+            if ok:
+                st.session_state.data_version += 1
+                st.rerun()
+        st.download_button("Template", get_template_excel(), "automation_template.xlsx",
+                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           use_container_width=True)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
