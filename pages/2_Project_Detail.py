@@ -16,7 +16,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import date
 
-from utils.auth        import require_login, current_user
+from utils.auth        import require_login, current_user, is_admin
 from utils.styles      import inject_css, sidebar_logo, page_header, section_title, COLORS
 from utils.data_loader import (
     ensure_data_file, load_projects, load_non_automatable,
@@ -153,6 +153,8 @@ tab_summ, tab_nonaut, tab_plan, tab_comp, tab_export = st.tabs([
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 1 — Summary
 # ══════════════════════════════════════════════════════════════════════════════
+_admin = is_admin()
+
 with tab_summ:
     section_title("Automation Status Summary")
     col_a, col_b = st.columns(2)
@@ -194,10 +196,13 @@ with tab_summ:
             "priority":        str(row.get("priority", "")),
             "notes":           str(row.get("notes", "")),
         }])
+        if not _admin:
+            st.info("👁️ View-only mode — you do not have permission to edit data.")
         edited_row = st.data_editor(
             edit_row,
             use_container_width=True,
             hide_index=True,
+            disabled=list(edit_row.columns) if not _admin else [],
             column_config={
                 "total_cases":     st.column_config.NumberColumn("Total Cases",     min_value=0, step=1),
                 "automatable":     st.column_config.NumberColumn("Automatable",     min_value=0, step=1),
@@ -216,7 +221,7 @@ with tab_summ:
             },
             key="summary_editor",
         )
-        if st.button("Save Changes", key="save_summary"):
+        if _admin and st.button("Save Changes", key="save_summary"):
             full = load_projects()
             er = edited_row.iloc[0]
             for col in edited_row.columns:
@@ -262,17 +267,18 @@ with tab_nonaut:
     st.markdown("---")
     section_title("Edit Non-Automatable Records")
     st.caption("✏️  Edit count, reason, or approach inline.")
+    _na_df = df_non if not df_non.empty else pd.DataFrame(
+        columns=["project_id","module","count","reason","approach"])
     edited_na = st.data_editor(
-        df_non if not df_non.empty else pd.DataFrame(
-            columns=["project_id","module","count","reason","approach"]),
-        use_container_width=True, num_rows="dynamic", hide_index=True,
-        disabled=["project_id"],
+        _na_df,
+        use_container_width=True, num_rows="dynamic" if _admin else "fixed", hide_index=True,
+        disabled=list(_na_df.columns) if not _admin else ["project_id"],
         column_config={
             "count": st.column_config.NumberColumn("Count", min_value=0, step=1),
         },
         key="na_editor",
     )
-    if st.button("Save Non-Auto Records"):
+    if _admin and st.button("Save Non-Auto Records"):
         try:
             ed = edited_na.copy()
             ed["project_id"] = sel_id
@@ -340,8 +346,8 @@ with tab_plan:
         st.caption("✏️  Update Actual Cases as automation progresses. Status: Planned / In Progress / Done.")
         edited_plan = st.data_editor(
             df_plan,
-            use_container_width=True, num_rows="dynamic", hide_index=True,
-            disabled=["project_id"],
+            use_container_width=True, num_rows="dynamic" if _admin else "fixed", hide_index=True,
+            disabled=list(df_plan.columns) if not _admin else ["project_id"],
             column_config={
                 "date":          st.column_config.DateColumn("Date"),
                 "planned_cases": st.column_config.NumberColumn("Planned Cases", min_value=0, step=1),
@@ -355,7 +361,7 @@ with tab_plan:
 
         col_ps1, col_ps2, _ = st.columns([1, 1, 4])
         with col_ps1:
-            if st.button("Save Plan", use_container_width=True):
+            if _admin and st.button("Save Plan", use_container_width=True):
                 try:
                     ed = edited_plan.copy()
                     ed["project_id"] = sel_id
@@ -414,6 +420,7 @@ with tab_comp:
     edited_comp = st.data_editor(
         df_comp_row,
         use_container_width=True, hide_index=True,
+        disabled=list(df_comp_row.columns) if not _admin else [],
         column_config={
             "project_id":          st.column_config.TextColumn("Project ID"),
             "name":                st.column_config.TextColumn("Name"),
@@ -428,7 +435,7 @@ with tab_comp:
         },
         key="comp_editor",
     )
-    if st.button("Save Completion Plan"):
+    if _admin and st.button("Save Completion Plan"):
         try:
             other = df_comp[df_comp["project_id"] != sel_id]
             merged = pd.concat([other, edited_comp], ignore_index=True)
