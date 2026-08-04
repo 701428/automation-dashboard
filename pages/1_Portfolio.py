@@ -58,7 +58,6 @@ with st.sidebar:
             st.session_state.pop(k, None)
         st.rerun()
     st.divider()
-    st.session_state.dark_mode = st.toggle("Dark Mode", value=st.session_state.dark_mode)
     st.divider()
     if is_admin():
         st.caption("DATA MANAGEMENT")
