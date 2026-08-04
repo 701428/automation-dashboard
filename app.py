@@ -15,6 +15,7 @@ st.set_page_config(
 import pandas as pd
 from datetime import date
 
+from utils.auth        import require_login, current_user, is_admin
 from utils.styles      import inject_css, sidebar_logo, page_header, section_title, COLORS
 from utils.data_loader import (
     ensure_data_file, load_projects, load_non_automatable,
@@ -28,6 +29,8 @@ from components.kpi_cards import portfolio_kpi_row
 from components.charts    import coverage_donut, progress_bar_chart, portfolio_stacked_bar
 from components.gantt     import project_gantt
 
+require_login()
+
 if "dark_mode"    not in st.session_state: st.session_state.dark_mode    = False
 if "data_version" not in st.session_state: st.session_state.data_version = 0
 if "uploader_key" not in st.session_state: st.session_state.uploader_key = 0
@@ -37,6 +40,30 @@ sidebar_logo(st.session_state.dark_mode)
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
+    # Profile card
+    name  = current_user()
+    role  = st.session_state.get("_role", "user").title()
+    initials = "".join(p[0].upper() for p in name.split()[:2]) if name else "U"
+    st.markdown(
+        f"""<div style="display:flex;align-items:center;gap:10px;
+            padding:10px 12px;border-radius:12px;
+            background:rgba(22,69,164,0.08);margin-bottom:4px;">
+          <div style="width:38px;height:38px;border-radius:50%;
+              background:linear-gradient(135deg,#1645a4,#37aafe);
+              display:flex;align-items:center;justify-content:center;
+              color:#fff;font-weight:700;font-size:0.9rem;flex-shrink:0;">{initials}</div>
+          <div>
+            <div style="font-weight:600;font-size:0.88rem;line-height:1.2;">{name}</div>
+            <div style="font-size:0.72rem;color:#64748b;">{role}</div>
+          </div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    if st.button("Logout", use_container_width=True, key="logout_main"):
+        for k in ["authentication_status","username","name","_role","_username","_name"]:
+            st.session_state.pop(k, None)
+        st.rerun()
+    st.divider()
     st.session_state.dark_mode = st.toggle("Dark Mode", value=st.session_state.dark_mode)
     st.divider()
     st.caption("DATA MANAGEMENT")

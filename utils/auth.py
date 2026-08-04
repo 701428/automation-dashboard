@@ -438,12 +438,6 @@ def require_login() -> str:
     Show branded enterprise login. Internal credentials only — no OAuth/SSO.
     """
     if st.session_state.get("authentication_status"):
-        with st.sidebar:
-            if st.button("Logout", use_container_width=True, key="logout_btn"):
-                for k in ["authentication_status", "username", "name",
-                          "_role", "_username", "_name"]:
-                    st.session_state.pop(k, None)
-                st.rerun()
         return st.session_state.get("_role", "user")
 
     logo = _logo_b64()
