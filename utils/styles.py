@@ -60,32 +60,98 @@ def sidebar_logo(dark_mode: bool = False) -> None:
 
 
 def inject_css(dark_mode: bool = False) -> None:
-    bg        = DARK_COLORS["bg_light"]  if dark_mode else COLORS["bg_light"]
-    card_bg   = DARK_COLORS["bg_blue"]   if dark_mode else COLORS["white"]
-    card_alt  = DARK_COLORS["bg_dark"]   if dark_mode else COLORS["bg_blue"]
-    text      = DARK_COLORS["body_text"] if dark_mode else COLORS["body_text"]
-    soft      = DARK_COLORS["soft_blue"] if dark_mode else COLORS["soft_blue"]
-    border    = DARK_COLORS["border"]    if dark_mode else COLORS["border"]
+    bg       = DARK_COLORS["bg_light"]  if dark_mode else COLORS["bg_light"]
+    card_bg  = DARK_COLORS["bg_blue"]   if dark_mode else COLORS["white"]
+    card_alt = DARK_COLORS["bg_dark"]   if dark_mode else COLORS["bg_blue"]
+    text     = DARK_COLORS["body_text"] if dark_mode else COLORS["body_text"]
+    soft     = DARK_COLORS["soft_blue"] if dark_mode else COLORS["soft_blue"]
+    border   = DARK_COLORS["border"]    if dark_mode else COLORS["border"]
+    sidebar_bg  = "#0b1a3f" if dark_mode else "#ebf4fb"
+    sidebar_txt = "#c8d4f0" if dark_mode else COLORS["body_text"]
+    input_bg    = "#0f2152" if dark_mode else "#ffffff"
+    input_txt   = "#e8eef8" if dark_mode else COLORS["body_text"]
 
     st.markdown(
         '<link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet">',
         unsafe_allow_html=True,
     )
-    st.markdown("""
+    st.markdown(f"""
 <style>
-/* Stack logo and subtitle vertically, no extra gap */
-[data-testid="stSidebarHeader"] {
+/* ── Main app background & text ─────────────────────────── */
+.stApp {{
+    background-color: {bg} !important;
+    color: {text} !important;
+}}
+/* ── Main content area ──────────────────────────────────── */
+[data-testid="stAppViewContainer"] > .main {{
+    background-color: {bg} !important;
+}}
+section[data-testid="stMain"] {{
+    background-color: {bg} !important;
+}}
+/* ── Sidebar ────────────────────────────────────────────── */
+[data-testid="stSidebar"] {{
+    background-color: {sidebar_bg} !important;
+}}
+[data-testid="stSidebar"] * {{
+    color: {sidebar_txt} !important;
+}}
+/* ── Cards / containers ─────────────────────────────────── */
+[data-testid="stMetric"],
+[data-testid="stVerticalBlock"] > div > div[data-testid="stVerticalBlock"],
+div.element-container {{
+    background-color: transparent !important;
+}}
+/* ── Dataframes / tables ────────────────────────────────── */
+[data-testid="stDataFrame"] iframe,
+[data-testid="stDataEditor"] iframe {{
+    background-color: {card_bg} !important;
+    border-radius: 8px;
+}}
+/* ── Inputs, selects, text areas ───────────────────────── */
+input, textarea, select,
+[data-baseweb="input"] input,
+[data-baseweb="textarea"] textarea,
+[data-baseweb="select"] div {{
+    background-color: {input_bg} !important;
+    color: {input_txt} !important;
+    border-color: {border} !important;
+}}
+/* ── Markdown / text ────────────────────────────────────── */
+.stMarkdown, .stMarkdown p, .stMarkdown li,
+h1, h2, h3, h4, p, label, span {{
+    color: {text} !important;
+}}
+/* ── Tabs ───────────────────────────────────────────────── */
+[data-testid="stTabs"] button {{
+    color: {soft} !important;
+}}
+[data-testid="stTabs"] button[aria-selected="true"] {{
+    color: {text} !important;
+    border-bottom-color: #37aafe !important;
+}}
+/* ── Dividers ───────────────────────────────────────────── */
+hr {{
+    border-color: {border} !important;
+}}
+/* ── Alerts / info boxes ────────────────────────────────── */
+[data-testid="stAlert"] {{
+    background-color: {card_alt} !important;
+    color: {text} !important;
+}}
+/* ── Logo subtitle ──────────────────────────────────────── */
+[data-testid="stSidebarHeader"] {{
     flex-direction: column !important;
     align-items: flex-start !important;
     gap: 0 !important;
     padding-bottom: 2px !important;
     padding-top: 0.75rem !important;
-}
-[data-testid="stSidebarNav"] {
+}}
+[data-testid="stSidebarNav"] {{
     padding-top: 0 !important;
     margin-top: 0 !important;
-}
-[data-testid="stSidebarHeader"]::after {
+}}
+[data-testid="stSidebarHeader"]::after {{
     content: "Automation Dashboard";
     display: block;
     font-size: 11px;
@@ -95,13 +161,12 @@ def inject_css(dark_mode: bool = False) -> None:
     color: #6c86bc;
     padding: 0 0 4px 2px;
     margin-top: -2px;
-}
-/* Keep collapse button at top-right */
-[data-testid="stSidebarHeader"] button {
+}}
+[data-testid="stSidebarHeader"] button {{
     position: absolute;
     right: 0.75rem;
     top: 0.75rem;
-}
+}}
 </style>
 """, unsafe_allow_html=True)
 
