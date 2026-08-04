@@ -17,7 +17,6 @@ import plotly.graph_objects as go
 from datetime import date
 
 from utils.styles      import inject_css, sidebar_logo, page_header, section_title, COLORS
-from utils.auth        import require_login, is_admin, current_user
 from utils.data_loader import (
     ensure_data_file, load_projects, load_non_automatable,
     load_day_plan, load_completion_plan,
@@ -29,42 +28,24 @@ from utils.exports      import export_excel, export_pdf_html
 from components.kpi_cards import kpi_row
 from components.gantt     import sprint_gantt
 
-
-def _clean_date_display(val: str) -> str:
-    """Normalize a date string for display: strip time, fix obvious year typos."""
-    if not val or str(val).strip().lower() in ("", "nan", "tbd", "none"):
-        return str(val)
-    s = str(val).strip()
-    try:
-        ts = pd.to_datetime(s, errors="coerce")
-        if pd.notna(ts) and 2000 <= ts.year <= 2100:
-            return ts.strftime("%Y-%m-%d")
-    except Exception:
-        pass
-    return s
-
 if "dark_mode"        not in st.session_state: st.session_state.dark_mode        = False
 if "data_version"     not in st.session_state: st.session_state.data_version     = 0
-if "selected_project" not in st.session_state: st.session_state.selected_project = "1p"
+if "selected_project" not in st.session_state: st.session_state.selected_project = None
 
 inject_css(st.session_state.dark_mode)
 sidebar_logo(st.session_state.dark_mode)
-require_login()
 
 with st.sidebar:
-    st.caption(f"Logged in as **{current_user()}** ({'Admin' if is_admin() else 'Viewer'})")
     st.session_state.dark_mode = st.toggle("Dark Mode", value=st.session_state.dark_mode)
     st.divider()
-    if is_admin():
-        st.caption("DATA MANAGEMENT")
-        uploaded = st.file_uploader("Upload Data", type=["xlsx","xls","csv"], label_visibility="collapsed")
-        if uploaded:
-            ok, msg = process_uploaded_file(uploaded)
-            (st.success if ok else st.error)(msg)
-            if ok:
-                st.session_state.data_version += 1
-                st.rerun()
-        st.divider()
+    st.caption("DATA MANAGEMENT")
+    uploaded = st.file_uploader("Upload Data", type=["xlsx","xls","csv"], label_visibility="collapsed")
+    if uploaded:
+        ok, msg = process_uploaded_file(uploaded)
+        (st.success if ok else st.error)(msg)
+        if ok:
+            st.session_state.data_version += 1
+            st.rerun()
     st.download_button("Template", get_template_excel(), "automation_template.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        use_container_width=True)
@@ -76,7 +57,7 @@ def get_all(v: int):
     df    = enrich_projects(load_projects())
     non   = load_non_automatable()
     plan  = load_day_plan()
-    comp  = load_completion_plan(df)
+    comp  = load_completion_plan()
     return df, non, plan, comp
 
 df_proj, df_non_all, df_plan_all, df_comp = get_all(st.session_state.data_version)
@@ -112,7 +93,7 @@ with col_hdr:
     st.caption(
         f"{int(row['total_cases']):,} total · {auto_tgt:,} automatable · "
         f"{non_cnt:,} non-automatable · "
-        f"Start: {row.get('start_date','')} → Target: {_clean_date_display(row.get('target_date',''))}"
+        f"Start: {row.get('start_date','')} → Target: {row.get('target_date','')}"
     )
 with col_badge:
     daily_avg = float(row.get("daily_avg", 0))
@@ -187,41 +168,38 @@ with tab_summ:
             "priority":        str(row.get("priority", "")),
             "notes":           str(row.get("notes", "")),
         }])
-        if is_admin():
-            edited_row = st.data_editor(
-                edit_row,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "total_cases":     st.column_config.NumberColumn("Total Cases",     min_value=0, step=1),
-                    "automatable":     st.column_config.NumberColumn("Automatable",     min_value=0, step=1),
-                    "non_automatable": st.column_config.NumberColumn("Non-Automatable", min_value=0, step=1),
-                    "automated":       st.column_config.NumberColumn("Automated",       min_value=0, step=1),
-                    "in_progress":     st.column_config.NumberColumn("In Progress",     min_value=0, step=1),
-                    "team_size":       st.column_config.NumberColumn("Team Size",       min_value=0, step=1),
-                    "daily_avg":       st.column_config.NumberColumn("Daily Avg",       min_value=0, step=0.5),
-                    "start_date":      st.column_config.TextColumn("Start Date"),
-                    "target_date":     st.column_config.TextColumn("Target Date"),
-                    "status":          st.column_config.SelectboxColumn(
-                        "Status", options=["Not Started","Started","Blocked","Delayed"]),
-                    "priority":        st.column_config.SelectboxColumn(
-                        "Priority", options=["High","Medium","Low"]),
-                    "notes":           st.column_config.TextColumn("Notes"),
-                },
-                key="summary_editor",
-            )
-            if st.button("Save Changes", key="save_summary"):
-                full = load_projects()
-                er = edited_row.iloc[0]
-                for col in edited_row.columns:
-                    if col in full.columns:
-                        full.loc[full["id"] == sel_id, col] = er[col]
-                save_projects(full)
-                st.session_state.data_version += 1
-                st.success("Saved.")
-                st.rerun()
-        else:
-            st.dataframe(edit_row, use_container_width=True, hide_index=True)
+        edited_row = st.data_editor(
+            edit_row,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "total_cases":     st.column_config.NumberColumn("Total Cases",     min_value=0, step=1),
+                "automatable":     st.column_config.NumberColumn("Automatable",     min_value=0, step=1),
+                "non_automatable": st.column_config.NumberColumn("Non-Automatable", min_value=0, step=1),
+                "automated":       st.column_config.NumberColumn("Automated",       min_value=0, step=1),
+                "in_progress":     st.column_config.NumberColumn("In Progress",     min_value=0, step=1),
+                "team_size":       st.column_config.NumberColumn("Team Size",       min_value=0, step=1),
+                "daily_avg":       st.column_config.NumberColumn("Daily Avg",       min_value=0, step=0.5),
+                "start_date":      st.column_config.TextColumn("Start Date"),
+                "target_date":     st.column_config.TextColumn("Target Date"),
+                "status":          st.column_config.SelectboxColumn(
+                    "Status", options=["Not Started","In Progress","At Risk","Completed","Planning Pending","On Track"]),
+                "priority":        st.column_config.SelectboxColumn(
+                    "Priority", options=["High","Medium","Low"]),
+                "notes":           st.column_config.TextColumn("Notes"),
+            },
+            key="summary_editor",
+        )
+        if st.button("Save Changes", key="save_summary"):
+            full = load_projects()
+            er = edited_row.iloc[0]
+            for col in edited_row.columns:
+                if col in full.columns:
+                    full.loc[full["id"] == sel_id, col] = er[col]
+            save_projects(full)
+            st.session_state.data_version += 1
+            st.success("Saved.")
+            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -255,36 +233,37 @@ with tab_nonaut:
         with col_tbl:
             st.dataframe(df_non, use_container_width=True, hide_index=True, height=300)
 
-    if is_admin():
-        st.markdown("---")
-        section_title("Edit Non-Automatable Records")
-        edited_na = st.data_editor(
-            df_non if not df_non.empty else pd.DataFrame(
-                columns=["project_id","module","count","reason","approach"]),
-            use_container_width=True, num_rows="dynamic", hide_index=True,
-            disabled=["project_id"],
-            column_config={
-                "count": st.column_config.NumberColumn("Count", min_value=0, step=1),
-            },
-            key="na_editor",
-        )
-        if st.button("Save Non-Auto Records"):
-            try:
-                ed = edited_na.copy()
-                ed["project_id"] = sel_id
-                ed["count"] = pd.to_numeric(ed["count"], errors="coerce").fillna(0).astype(int)
-                save_non_automatable(sel_id, ed)
-                full = load_projects()
-                full.loc[full["id"]==sel_id, "non_automatable"] = int(ed["count"].sum())
-                full.loc[full["id"]==sel_id, "automatable"] = (
-                    int(row["total_cases"]) - int(ed["count"].sum())
-                )
-                save_projects(full)
-                st.session_state.data_version += 1
-                st.success(f"Saved. Total non-automatable: {int(ed['count'].sum())}")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Save failed: {e}")
+    st.markdown("---")
+    section_title("Edit Non-Automatable Records")
+    st.caption("✏️  Edit count, reason, or approach inline.")
+    edited_na = st.data_editor(
+        df_non if not df_non.empty else pd.DataFrame(
+            columns=["project_id","module","count","reason","approach"]),
+        use_container_width=True, num_rows="dynamic", hide_index=True,
+        disabled=["project_id"],
+        column_config={
+            "count": st.column_config.NumberColumn("Count", min_value=0, step=1),
+        },
+        key="na_editor",
+    )
+    if st.button("Save Non-Auto Records"):
+        try:
+            ed = edited_na.copy()
+            ed["project_id"] = sel_id
+            ed["count"] = pd.to_numeric(ed["count"], errors="coerce").fillna(0).astype(int)
+            save_non_automatable(sel_id, ed)
+            # update total in projects
+            full = load_projects()
+            full.loc[full["id"]==sel_id, "non_automatable"] = int(ed["count"].sum())
+            full.loc[full["id"]==sel_id, "automatable"] = (
+                int(row["total_cases"]) - int(ed["count"].sum())
+            )
+            save_projects(full)
+            st.session_state.data_version += 1
+            st.success(f"Saved. Total non-automatable: {int(ed['count'].sum())}")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Save failed: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -331,52 +310,53 @@ with tab_plan:
             )
             st.plotly_chart(fig_cum, use_container_width=True, config={"displayModeBar":False}, key="plan_bar")
 
-        section_title("Day-by-Day Plan" if not is_admin() else "Edit Day-by-Day Plan")
-        if is_admin():
-            edited_plan = st.data_editor(
-                df_plan,
-                use_container_width=True, num_rows="dynamic", hide_index=True,
-                disabled=["project_id"],
-                column_config={
-                    "date":          st.column_config.DateColumn("Date"),
-                    "planned_cases": st.column_config.NumberColumn("Planned Cases", min_value=0, step=1),
-                    "actual_cases":  st.column_config.NumberColumn("Actual Cases",  min_value=0, step=1),
-                    "cumulative":    st.column_config.NumberColumn("Cumulative",     min_value=0, step=1),
-                    "status":        st.column_config.SelectboxColumn(
-                        "Status", options=["Planned","In Progress","Done","Skipped"]),
-                },
-                key="plan_editor",
+        section_title("Edit Day-by-Day Plan")
+        st.caption("✏️  Update Actual Cases as automation progresses. Status: Planned / In Progress / Done.")
+        edited_plan = st.data_editor(
+            df_plan,
+            use_container_width=True, num_rows="dynamic", hide_index=True,
+            disabled=["project_id"],
+            column_config={
+                "date":          st.column_config.DateColumn("Date"),
+                "planned_cases": st.column_config.NumberColumn("Planned Cases", min_value=0, step=1),
+                "actual_cases":  st.column_config.NumberColumn("Actual Cases",  min_value=0, step=1),
+                "cumulative":    st.column_config.NumberColumn("Cumulative",     min_value=0, step=1),
+                "status":        st.column_config.SelectboxColumn(
+                    "Status", options=["Planned","In Progress","Done","Skipped"]),
+            },
+            key="plan_editor",
+        )
+
+        col_ps1, col_ps2, _ = st.columns([1, 1, 4])
+        with col_ps1:
+            if st.button("Save Plan", use_container_width=True):
+                try:
+                    ed = edited_plan.copy()
+                    ed["project_id"] = sel_id
+                    for c in ["planned_cases","actual_cases","cumulative"]:
+                        ed[c] = pd.to_numeric(ed[c], errors="coerce").fillna(0).astype(int)
+                    # recompute cumulative
+                    ed = ed.sort_values("date")
+                    ed["cumulative"] = ed["actual_cases"].cumsum()
+                    save_day_plan(sel_id, ed)
+                    # update automated total from cumulative
+                    total_done = int(ed["actual_cases"].sum())
+                    if total_done > 0:
+                        full = load_projects()
+                        full.loc[full["id"]==sel_id, "automated"] = total_done
+                        save_projects(full)
+                    st.session_state.data_version += 1
+                    st.success("Plan saved!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Save failed: {e}")
+        with col_ps2:
+            st.download_button(
+                "Export Plan CSV",
+                df_plan.to_csv(index=False).encode(),
+                f"{sel_id}_plan.csv", "text/csv",
+                use_container_width=True,
             )
-            col_ps1, col_ps2, _ = st.columns([1, 1, 4])
-            with col_ps1:
-                if st.button("Save Plan", use_container_width=True):
-                    try:
-                        ed = edited_plan.copy()
-                        ed["project_id"] = sel_id
-                        for c in ["planned_cases","actual_cases","cumulative"]:
-                            ed[c] = pd.to_numeric(ed[c], errors="coerce").fillna(0).astype(int)
-                        ed = ed.sort_values("date")
-                        ed["cumulative"] = ed["actual_cases"].cumsum()
-                        save_day_plan(sel_id, ed)
-                        total_done = int(ed["actual_cases"].sum())
-                        if total_done > 0:
-                            full = load_projects()
-                            full.loc[full["id"]==sel_id, "automated"] = total_done
-                            save_projects(full)
-                        st.session_state.data_version += 1
-                        st.success("Plan saved!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Save failed: {e}")
-            with col_ps2:
-                st.download_button(
-                    "Export Plan CSV",
-                    df_plan.to_csv(index=False).encode(),
-                    f"{sel_id}_plan.csv", "text/csv",
-                    use_container_width=True,
-                )
-        else:
-            st.dataframe(df_plan, use_container_width=True, hide_index=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -385,73 +365,53 @@ with tab_plan:
 with tab_comp:
     section_title("Project Completion Plan")
 
+    # Summary cards from completion plan
     if not df_comp_row.empty:
-        cr = df_comp_row.iloc[0]
-        # Row 1 — live progress
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Total Cases",  f"{int(cr.get('total_cases',  0)):,}")
-        m2.metric("Automatable",  f"{int(cr.get('automatable',  0)):,}")
-        m3.metric("Automated",    f"{int(cr.get('automated',    0)):,}")
-        m4.metric("Pending",      f"{int(cr.get('pending',      0)):,}")
-        m5.metric("Progress",     f"{cr.get('progress_pct', 0):.1f}%")
-
+        r = df_comp_row.iloc[0]
+        kpi_row([
+            {"label": "Total Cases",    "value": f"{int(r.get('total_cases',0)):,}"},
+            {"label": "Automatable",    "value": f"{int(r.get('automatable',0)):,}"},
+            {"label": "Duration",       "value": f"{r.get('duration_days','TBD')} days"},
+            {"label": "Daily Avg",      "value": f"~{r.get('daily_avg','TBD')} cases/day"},
+            {"label": "Expected Done",  "value": str(r.get("expected_completion","TBD"))},
+        ])
         st.markdown("")
 
-        # Row 2 — plan timeline
-        m6, m7, m8, m9 = st.columns(4)
-        m6.metric("Daily Avg",           f"{cr.get('daily_avg', 0):.1f} cases/day")
-        m7.metric("Duration",            f"{int(cr.get('duration_days', 0))} days")
-        m8.metric("Start Date",          str(cr.get("start_date", "TBD")))
-        m9.metric("Expected Completion", str(cr.get("expected_completion", "TBD")))
+    # Full completion plan table — filtered to selected project
+    st.dataframe(
+        df_comp_row.rename(columns={c: c.replace("_"," ").title() for c in df_comp_row.columns}),
+        use_container_width=True, hide_index=True,
+    )
 
-        st.markdown("")
-        pct = float(cr.get("progress_pct", 0))
-        st.progress(min(pct / 100, 1.0),
-                    text=f"{pct:.1f}% complete · Status: **{cr.get('status', '—')}**")
-
-    st.divider()
-
-    if is_admin():
-        section_title("Edit Plan Settings")
-        st.caption("Set Daily Avg, Start Date and Status — all other columns update automatically from project data.")
-        if not df_comp_row.empty:
-            cr = df_comp_row.iloc[0]
-            with st.form("comp_form"):
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    new_daily = st.number_input(
-                        "Daily Avg (cases/day)",
-                        min_value=0.0, step=0.5,
-                        value=float(cr.get("daily_avg", 0) or 0),
-                    )
-                with c2:
-                    raw_sd = cr.get("start_date", "TBD")
-                    try:
-                        sd_val = pd.to_datetime(raw_sd).date()
-                    except Exception:
-                        sd_val = date.today()
-                    new_start = st.date_input("Start Date", value=sd_val)
-                with c3:
-                    status_opts = ["Not Started", "Started", "On Track", "Blocked", "Delayed", "Completed"]
-                    cur_status  = str(cr.get("status", "Not Started"))
-                    if cur_status not in status_opts:
-                        status_opts.insert(0, cur_status)
-                    new_status = st.selectbox("Status", status_opts,
-                                              index=status_opts.index(cur_status))
-                if st.form_submit_button("Save Plan Settings", use_container_width=True):
-                    try:
-                        # Merge into the full df so save_completion_plan touches all projects
-                        upd = df_comp.copy()
-                        mask = upd["project_id"] == sel_id
-                        upd.loc[mask, "daily_avg"]  = new_daily
-                        upd.loc[mask, "start_date"] = str(new_start)
-                        upd.loc[mask, "status"]     = new_status
-                        save_completion_plan(upd)
-                        st.session_state.data_version += 1
-                        st.success("Plan settings saved — completion date recalculated.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Save failed: {e}")
+    st.markdown("---")
+    section_title("Edit Completion Plan")
+    edited_comp = st.data_editor(
+        df_comp_row,
+        use_container_width=True, hide_index=True,
+        column_config={
+            "project_id":          st.column_config.TextColumn("Project ID"),
+            "name":                st.column_config.TextColumn("Name"),
+            "total_cases":         st.column_config.NumberColumn("Total Cases", min_value=0, step=1),
+            "automatable":         st.column_config.NumberColumn("Automatable", min_value=0, step=1),
+            "duration_days":       st.column_config.NumberColumn("Duration (Days)", min_value=0, step=1),
+            "daily_avg":           st.column_config.NumberColumn("Daily Avg", min_value=0, step=0.5),
+            "start_date":          st.column_config.TextColumn("Start Date"),
+            "expected_completion": st.column_config.TextColumn("Expected Completion"),
+            "status":              st.column_config.SelectboxColumn(
+                "Status", options=["On Track","At Risk","Delayed","Planning Pending","In Progress","Completed"]),
+        },
+        key="comp_editor",
+    )
+    if st.button("Save Completion Plan"):
+        try:
+            other = df_comp[df_comp["project_id"] != sel_id]
+            merged = pd.concat([other, edited_comp], ignore_index=True)
+            save_completion_plan(merged)
+            st.session_state.data_version += 1
+            st.success("Completion plan saved!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Save failed: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

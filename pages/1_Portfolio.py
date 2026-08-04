@@ -20,7 +20,6 @@ from utils.data_loader import (
     load_day_plan, save_projects,
     process_uploaded_file, get_template_excel,
 )
-from utils.auth        import require_login, is_admin, current_user
 from utils.calculations import enrich_projects, portfolio_summary
 from components.charts  import progress_bar_chart, portfolio_stacked_bar
 from components.gantt   import project_gantt
@@ -31,31 +30,27 @@ if "uploader_key" not in st.session_state: st.session_state.uploader_key = 0
 
 inject_css(st.session_state.dark_mode)
 sidebar_logo(st.session_state.dark_mode)
-require_login()
 
 with st.sidebar:
-    st.caption(f"Logged in as **{current_user()}** ({'Admin' if is_admin() else 'Viewer'})")
     st.session_state.dark_mode = st.toggle("Dark Mode", value=st.session_state.dark_mode)
     st.divider()
-    if is_admin():
-        st.caption("DATA MANAGEMENT")
-        uploaded = st.file_uploader(
-            "Upload Tracker / Data", type=["xlsx","xls","csv"],
-            label_visibility="collapsed",
-            help="Upload 'Automation tracker.xlsx' to refresh all project data",
-            key=f"uploader_{st.session_state.uploader_key}",
-        )
-        if uploaded:
-            with st.spinner("Processing tracker…"):
-                ok, msg = process_uploaded_file(uploaded)
-            if ok:
-                st.session_state.data_version += 1
-                st.session_state.uploader_key += 1
-                st.session_state["_upload_ok_msg"] = msg
-                st.rerun()
-            else:
-                st.error(msg)
-        st.divider()
+    st.caption("DATA MANAGEMENT")
+    uploaded = st.file_uploader(
+        "Upload Tracker / Data", type=["xlsx","xls","csv"],
+        label_visibility="collapsed",
+        help="Upload 'Automation tracker.xlsx' to refresh all project data",
+        key=f"uploader_{st.session_state.uploader_key}",
+    )
+    if uploaded:
+        with st.spinner("Processing tracker…"):
+            ok, msg = process_uploaded_file(uploaded)
+        if ok:
+            st.session_state.data_version += 1
+            st.session_state.uploader_key += 1
+            st.session_state["_upload_ok_msg"] = msg
+            st.rerun()
+        else:
+            st.error(msg)
     st.download_button("Template", get_template_excel(), "automation_template.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        use_container_width=True)
@@ -79,36 +74,58 @@ if st.session_state.get("_upload_ok_msg"):
 section_title("Projects")
 
 _STATUS_COLOR = {
-    "In Progress":     "#37aafe",
-    "Not Started":     "#6c86bc",
-    "Completed":       "#02c9a8",
-    "At Risk":         "#f6ad55",
-    "Planning Pending":"#6c86bc",
-    "On Track":        "#02c9a8",
+    "In Progress":      "#37aafe",
+    "Not Started":      "#6c86bc",
+    "Completed":        "#02c9a8",
+    "At Risk":          "#f6ad55",
+    "Planning Pending": "#6c86bc",
+    "On Track":         "#02c9a8",
+    "Delayed":          "#f87171",
+    "On Hold":          "#a78bfa",
+    "Planned":          "#94a3b8",
 }
 
-cols = st.columns(len(df_proj))
-for col, (_, row) in zip(cols, df_proj.iterrows()):
-    cov    = float(row.get("coverage_pct", 0))
-    status = str(row.get("status",""))
-    sc     = _STATUS_COLOR.get(status, "#6c86bc")
-    pend   = int(row.get("pending", 0))
-    auto   = int(row["automated"])
-    nona   = int(row.get("non_automatable", 0))
-    auto_tgt = int(row.get("automatable", int(row["total_cases"]) - nona))
+CARDS_PER_ROW = 4
+rows_iter = [df_proj.iloc[i:i+CARDS_PER_ROW] for i in range(0, len(df_proj), CARDS_PER_ROW)]
 
-    with col:
-        st.metric(row["name"], f"{cov:.1f}% coverage",
-                  f"{auto:,} / {auto_tgt:,} automated")
-        st.progress(cov / 100)
-        st.caption(f"**Status:** {status}  |  **Pending:** {pend:,}  |  **Non-auto:** {nona:,}")
-        st.caption(f"**Target:** {row.get('target_date','')}  |  **Team:** {int(row.get('team_size',0))}")
-        if row.get("notes"):
-            with st.expander("Notes"):
-                st.write(row["notes"])
-        if st.button("View Detail", key=f"btn_{row['id']}", use_container_width=True):
-            st.session_state["selected_project"] = row["id"]
-            st.switch_page("pages/2_Project_Detail.py")
+for row_group in rows_iter:
+    cols = st.columns(CARDS_PER_ROW)
+    for col, (_, row) in zip(cols, row_group.iterrows()):
+        cov      = float(row.get("coverage_pct", 0))
+        status   = str(row.get("status", ""))
+        sc       = _STATUS_COLOR.get(status, "#6c86bc")
+        pend     = int(row.get("pending", 0))
+        auto     = int(row["automated"])
+        nona     = int(row.get("non_automatable", 0))
+        auto_tgt = int(row.get("automatable", int(row["total_cases"]) - nona))
+        target   = str(row.get("target_date", "TBD"))
+
+        with col:
+            # Colored status badge + name
+            st.markdown(
+                f"<span style='background:{sc};color:#fff;padding:2px 8px;"
+                f"border-radius:4px;font-size:0.72rem;font-weight:600'>{status}</span>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(f"**{row['name']}**")
+            st.metric(
+                label="Coverage",
+                value=f"{cov:.1f}%",
+                delta=f"{auto:,} / {auto_tgt:,} automated",
+                label_visibility="collapsed",
+            )
+            st.progress(min(cov / 100, 1.0))
+            st.caption(
+                f"Pending **{pend:,}** · Non-auto **{nona:,}**  \n"
+                f"Target **{target}**"
+            )
+            if row.get("notes"):
+                with st.expander("Notes", expanded=False):
+                    st.write(row["notes"])
+            if st.button("View Detail", key=f"btn_{row['id']}", use_container_width=True):
+                st.session_state["selected_project"] = row["id"]
+                st.switch_page("pages/2_Project_Detail.py")
+    st.write("")  # row spacing
 
 st.divider()
 
@@ -128,49 +145,46 @@ st.plotly_chart(project_gantt(df_proj, st.session_state.dark_mode),
                 config={"displayModeBar":True,"modeBarButtonsToRemove":["lasso2d","select2d"]},
                 key="port_gantt")
 
-# ── Editable progress table (admin only) ──────────────────────────────────────
-section_title("Automation Progress")
+# ── Editable progress table ────────────────────────────────────────────────────
+section_title("Update Automation Progress")
+st.caption("Edit **Automated** and **In Progress** counts then click Save.")
 
 edit_cols = ["id","name","total_cases","automatable","non_automatable","automated","in_progress","status"]
 avail     = [c for c in edit_cols if c in df_proj.columns]
+edited    = st.data_editor(
+    df_proj[avail],
+    use_container_width=True,
+    hide_index=True,
+    disabled=[c for c in avail if c not in ("automated","in_progress","status")],
+    column_config={
+        "automated":   st.column_config.NumberColumn("Automated",   min_value=0, step=1),
+        "in_progress": st.column_config.NumberColumn("In Progress", min_value=0, step=1),
+        "status":      st.column_config.SelectboxColumn(
+            "Status", options=["Not Started","In Progress","At Risk","Completed","Planning Pending"]),
+    },
+    key="portfolio_editor",
+)
 
-if is_admin():
-    st.caption("Edit **Automated** and **In Progress** counts then click Save.")
-    edited = st.data_editor(
-        df_proj[avail],
-        use_container_width=True,
-        hide_index=True,
-        disabled=[c for c in avail if c not in ("automated","in_progress","status")],
-        column_config={
-            "automated":   st.column_config.NumberColumn("Automated",   min_value=0, step=1),
-            "in_progress": st.column_config.NumberColumn("In Progress", min_value=0, step=1),
-            "status":      st.column_config.SelectboxColumn(
-                "Status", options=["Not Started","Started","Blocked","Delayed"]),
-        },
-        key="portfolio_editor",
-    )
-    col_s1, col_s2, _ = st.columns([1, 1, 4])
-    with col_s1:
-        if st.button("Save Changes", use_container_width=True):
-            try:
-                full = load_projects()
-                for _, er in edited.iterrows():
-                    pid = er["id"]
-                    for col in ["automated","in_progress","status"]:
-                        if col in er and col in full.columns:
-                            full.loc[full["id"]==pid, col] = er[col]
-                save_projects(full)
-                st.session_state.data_version += 1
-                st.success("Saved!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Save failed: {e}")
-    with col_s2:
-        if st.button("Reset to Defaults", use_container_width=True):
-            from utils.data_loader import MAIN_FILE
-            if MAIN_FILE.exists():
-                MAIN_FILE.unlink()
+col_s1, col_s2, _ = st.columns([1, 1, 4])
+with col_s1:
+    if st.button("Save Changes", use_container_width=True):
+        try:
+            full = load_projects()
+            for _, er in edited.iterrows():
+                pid = er["id"]
+                for col in ["automated","in_progress","status"]:
+                    if col in er and col in full.columns:
+                        full.loc[full["id"]==pid, col] = er[col]
+            save_projects(full)
             st.session_state.data_version += 1
+            st.success("Saved!")
             st.rerun()
-else:
-    st.dataframe(df_proj[avail], use_container_width=True, hide_index=True)
+        except Exception as e:
+            st.error(f"Save failed: {e}")
+with col_s2:
+    if st.button("Reset to Defaults", use_container_width=True):
+        from utils.data_loader import MAIN_FILE
+        if MAIN_FILE.exists():
+            MAIN_FILE.unlink()
+        st.session_state.data_version += 1
+        st.rerun()

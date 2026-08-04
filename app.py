@@ -23,7 +23,6 @@ from utils.data_loader import (
 )
 from utils.calculations import enrich_projects, portfolio_summary
 from utils.exports      import export_excel, export_pdf_html
-from utils.auth         import require_login, is_admin, current_user
 
 from components.kpi_cards import portfolio_kpi_row
 from components.charts    import coverage_donut, progress_bar_chart, portfolio_stacked_bar
@@ -36,32 +35,26 @@ if "uploader_key" not in st.session_state: st.session_state.uploader_key = 0
 inject_css(st.session_state.dark_mode)
 sidebar_logo(st.session_state.dark_mode)
 
-# ── Auth ───────────────────────────────────────────────────────────────────────
-require_login()
-
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.caption(f"Logged in as **{current_user()}** ({'Admin' if is_admin() else 'Viewer'})")
     st.session_state.dark_mode = st.toggle("Dark Mode", value=st.session_state.dark_mode)
     st.divider()
-    if is_admin():
-        st.caption("DATA MANAGEMENT")
-        uploaded = st.file_uploader(
-            "Upload Tracker / Data", type=["xlsx","xls","csv"], label_visibility="collapsed",
-            help="Upload 'Automation tracker.xlsx' to refresh all project data",
-            key=f"uploader_{st.session_state.uploader_key}",
-        )
-        if uploaded:
-            with st.spinner("Processing tracker…"):
-                ok, msg = process_uploaded_file(uploaded)
-            if ok:
-                st.session_state.data_version += 1
-                st.session_state.uploader_key += 1
-                st.session_state["_upload_ok_msg"] = msg
-                st.rerun()
-            else:
-                st.error(msg)
-        st.divider()
+    st.caption("DATA MANAGEMENT")
+    uploaded = st.file_uploader(
+        "Upload Tracker / Data", type=["xlsx","xls","csv"], label_visibility="collapsed",
+        help="Upload 'Automation tracker.xlsx' to refresh all project data",
+        key=f"uploader_{st.session_state.uploader_key}",
+    )
+    if uploaded:
+        with st.spinner("Processing tracker…"):
+            ok, msg = process_uploaded_file(uploaded)
+        if ok:
+            st.session_state.data_version += 1
+            st.session_state.uploader_key += 1
+            st.session_state["_upload_ok_msg"] = msg
+            st.rerun()
+        else:
+            st.error(msg)
     st.download_button("Download Template", get_template_excel(),
                        "automation_template.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -76,7 +69,7 @@ def get_data(v: int):
     df   = enrich_projects(load_projects())
     non  = load_non_automatable()
     plan = load_day_plan()
-    comp = load_completion_plan(enrich_projects(load_projects()))
+    comp = load_completion_plan()
     summ = portfolio_summary(df)
     return df, non, plan, comp, summ
 
@@ -151,6 +144,7 @@ with col_na2:
 # ── Export ─────────────────────────────────────────────────────────────────────
 section_title("Export Reports")
 
+# Tracker download — same format as Automation tracker.xlsx
 st.download_button(
     "Download Automation Tracker",
     get_tracker_download(),

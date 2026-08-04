@@ -1,16 +1,16 @@
 """
-Data loading layer — Option B: reads directly from Automation tracker.xlsx.
+Data loading layer — reads directly from Automation tracker.xlsx.
 
 Flow:
-  1. If tracker file exists and is newer than internal store → re-parse tracker → save to MAIN_FILE
+  1. Auto-detect tracker in project root or data/ dir; if newer than internal store → re-parse
   2. All load_* functions read from MAIN_FILE (openpyxl, stable format)
   3. save_* functions write back to MAIN_FILE (user overrides persist between tracker uploads)
   4. process_uploaded_file() detects tracker sheets → saves as TRACKER_FILE → triggers re-parse
+  5. project_config.json stores runtime-only metadata (color, priority, team_size) per project
 """
 
 import io
 import json
-import math
 import re
 from pathlib import Path
 from typing import Optional
@@ -18,81 +18,78 @@ from typing import Optional
 import pandas as pd
 import numpy as np
 
-DATA_DIR          = Path(__file__).parent.parent / "data"
-MAIN_FILE         = DATA_DIR / "automation_data.xlsx"
-TRACKER_FILE      = DATA_DIR / "Automation tracker.xlsx"
-UPLOAD_DIR        = DATA_DIR / "uploads"
-COMP_SETTINGS_FILE = DATA_DIR / "completion_settings.json"
+DATA_DIR     = Path(__file__).parent.parent / "data"
+MAIN_FILE    = DATA_DIR / "automation_data.xlsx"
+TRACKER_FILE = DATA_DIR / "Automation tracker.xlsx"
+CONFIG_FILE  = DATA_DIR / "project_config.json"
+UPLOAD_DIR   = DATA_DIR / "uploads"
+ROOT_TRACKER = Path(__file__).parent.parent / "Automation tracker.xlsx"
 
 DATA_DIR.mkdir(exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# Core sheets that always exist; any additional sheets are auto-discovered
-TRACKER_SHEETS_CORE = {"Firmware", "HES", "VEE", "Consumer_App", "Comms", "WFM"}
-# Sheets to always skip (summary/index tabs)
-TRACKER_SHEETS_SKIP = {"Sheet1", "Sheet2", "Sheet3", "Summary", "Index",
-                       "Instructions", "Template", "Changelog", "README"}
-
-# ── Static metadata not stored in the tracker ──────────────────────────────────
-_PROJECT_META = {
-    "1p":           {"color": "#1645a4", "priority": "High",   "team_size": 1, "daily_avg": 8},
-    "3p_wc":        {"color": "#02c9a8", "priority": "Medium", "team_size": 1, "daily_avg": 0},
-    "3p_ltct":      {"color": "#37aafe", "priority": "Medium", "team_size": 1, "daily_avg": 0},
-    "hes":          {"color": "#7c3aed", "priority": "High",   "team_size": 1, "daily_avg": 4},
-    "vee":          {"color": "#0891b2", "priority": "High",   "team_size": 1, "daily_avg": 0},
-    "consumer_app": {"color": "#db2777", "priority": "Medium", "team_size": 1, "daily_avg": 1},
-    "comms":        {"color": "#ea580c", "priority": "High",   "team_size": 1, "daily_avg": 3},
-    "wfm":          {"color": "#059669", "priority": "Medium", "team_size": 1, "daily_avg": 4},
-}
-
-_PROJ_NAMES = {
-    "1p":           "1-Phase Meter Firmware",
-    "3p_wc":        "3-Phase WC",
-    "3p_ltct":      "3-Phase LTCT",
-    "hes":          "HES (Gomati / Sangai)",
-    "vee":          "VEE (Gomati / Sangai)",
-    "consumer_app": "Consumer App (Gomati Android)",
-    "comms":        "Comms (4G / RF / IMG / DCU)",
-    "wfm":          "WFM Portal – Stage (UP)",
-}
-
-# Firmware sub-project definitions (total/automatable fixed from test plan)
-_FIRMWARE_SUBS = [
-    {"id": "1p",      "env_key": "1-Phase",     "total_cases": 523, "automatable": 393, "non_automatable": 130,
-     "start_date": "2026-07-13", "target_date": "2026-08-31", "status": "In Progress"},
-    {"id": "3p_wc",   "env_key": "3-Phase WC",  "total_cases": 454, "automatable": 454, "non_automatable": 0,
-     "start_date": "TBD",        "target_date": "TBD",        "status": "Not Started"},
-    {"id": "3p_ltct", "env_key": "3-Phase LTCT","total_cases": 455, "automatable": 455, "non_automatable": 0,
-     "start_date": "TBD",        "target_date": "TBD",        "status": "Not Started"},
+_DEFAULT_PALETTE = [
+    "#1645a4", "#02c9a8", "#37aafe", "#7c3aed", "#0891b2",
+    "#db2777", "#ea580c", "#059669", "#f59e0b", "#64748b",
+    "#dc2626", "#0d9488", "#7c3aed", "#0369a1",
 ]
 
-_SHEET_PID = {
-    "HES": "hes", "VEE": "vee",
-    "Consumer_App": "consumer_app", "Comms": "comms", "WFM": "wfm",
-}
 
-# Colour palette cycled for auto-discovered sheets
-_AUTO_COLORS = [
-    "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6",
-    "#14b8a6", "#f97316", "#ec4899", "#06b6d4", "#84cc16",
-]
+# ── Slug / ID helpers ──────────────────────────────────────────────────────────
 
-def _sheet_to_pid(sheet: str) -> str:
-    """Convert sheet name to a stable lowercase project id."""
-    return re.sub(r"[^a-z0-9]", "_", sheet.lower()).strip("_")
+def _slugify(name: str) -> str:
+    """'HES-Sangai' → 'hes_sangai', 'Meter Setu' → 'meter_setu'"""
+    s = name.lower()
+    s = re.sub(r'[\s\-/()+]+', '_', s)
+    s = re.sub(r'[^a-z0-9_]', '', s)
+    return re.sub(r'_+', '_', s).strip('_')
 
-def _auto_meta(sheet: str, index: int = 0) -> dict:
-    """Generate default metadata for a sheet not in _PROJECT_META."""
-    return {
-        "color":    _AUTO_COLORS[index % len(_AUTO_COLORS)],
-        "priority": "Medium",
-        "team_size": 1,
-        "daily_avg": 0,
-    }
 
-def _auto_name(sheet: str) -> str:
-    """Human-readable project name from sheet name."""
-    return sheet.replace("_", " ").title()
+def _firmware_sub_id(name: str) -> Optional[str]:
+    """Map firmware completion-plan row name to a stable project ID."""
+    n = name.lower()
+    if "overall" in n:
+        return None  # skip the aggregate row
+    if "1-phase" in n or "1 phase" in n:
+        return "1p"
+    if ("3-phase" in n or "3phase" in n) and "wc" in n:
+        return "3p_wc"
+    if ("3-phase" in n or "3phase" in n) and "ltct" in n:
+        return "3p_ltct"
+    return _slugify(name)
+
+
+def _firmware_env_prefix(pid: str) -> str:
+    return {"1p": "1-phase", "3p_wc": "3-phase wc", "3p_ltct": "3-phase ltct"}.get(pid, pid)
+
+
+# ── Project config JSON ────────────────────────────────────────────────────────
+
+def _load_project_config() -> dict:
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_project_config(cfg: dict) -> None:
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(cfg, f, indent=2)
+
+
+def _project_cfg(pid: str, cfg: dict, idx: int = 0) -> dict:
+    """Return config for pid, creating defaults if absent."""
+    if pid not in cfg:
+        cfg[pid] = {
+            "color":     _DEFAULT_PALETTE[idx % len(_DEFAULT_PALETTE)],
+            "priority":  "Medium",
+            "team_size": 1,
+            "daily_avg": 0,
+        }
+    return cfg[pid]
 
 
 # ── Parsing helpers ────────────────────────────────────────────────────────────
@@ -101,7 +98,7 @@ def _parse_int(val) -> int:
     if val is None or (isinstance(val, float) and (val != val)):
         return 0
     try:
-        return int(float(val))
+        return int(float(str(val).strip().split('(')[0].replace(',', '')))
     except Exception:
         m = re.search(r"\d+", str(val))
         return int(m.group()) if m else 0
@@ -111,10 +108,9 @@ def _parse_float(val) -> float:
     if val is None or (isinstance(val, float) and (val != val)):
         return 0.0
     try:
-        return float(val)
+        return float(re.search(r"[\d.]+", str(val)).group())
     except Exception:
-        m = re.search(r"[\d.]+", str(val))
-        return float(m.group()) if m else 0.0
+        return 0.0
 
 
 def _parse_date(val) -> Optional[str]:
@@ -124,12 +120,12 @@ def _parse_date(val) -> Optional[str]:
         if isinstance(val, float) and val != val:
             return None
         ts = pd.to_datetime(val, errors="coerce")
-        if pd.notna(ts) and 2000 <= ts.year <= 2100:
+        if pd.notna(ts):
             return ts.date().isoformat()
     except Exception:
         pass
     s = str(val).strip()
-    return s if s.lower() not in ("nan", "nat", "none", "tbd", "") else None
+    return s if s.lower() not in ("nan", "nat", "none", "tbd", "", "n/a") else None
 
 
 def _safe_str(val) -> str:
@@ -160,236 +156,232 @@ def _rows_between(df: pd.DataFrame, start: Optional[int], end: Optional[int]) ->
 
 
 def _count_from_name(name: str) -> int:
-    """Extract count from strings like 'TAP (54 Test Cases)' or 'NA (6 Test Cases)'."""
     m = re.search(r"\((\d+)\s*[Tt]est", name)
     if m:
         return int(m.group(1))
-    # count comma-separated IDs as a proxy
     parts = [p.strip() for p in name.split(",") if p.strip()]
     return len(parts) if len(parts) > 1 else 1
 
 
-# ── Core tracker parser ────────────────────────────────────────────────────────
+def _normalize_status(raw: str) -> str:
+    r = raw.lower().strip()
+    if not r or r in ("nan", ""):
+        return "In Progress"
+    if r in ("scheduled", "not started", "not started yet", "planning pending"):
+        return "Not Started"
+    if r in ("done", "completed"):
+        return "Completed"
+    if "on hold" in r:
+        return "On Hold"
+    if r == "delayed":
+        return "Delayed"
+    if "on track" in r:
+        return "On Track"
+    if "in progress" in r or "progress" in r:
+        return "In Progress"
+    return raw.strip()
 
-def _parse_and_save_tracker(tracker_path: Path) -> None:
-    """Parse all sheets from the tracker xlsx and write to MAIN_FILE."""
-    xl = pd.ExcelFile(tracker_path)
 
-    all_projects   = []
-    all_non_auto   = []
-    all_day_plan   = []
-    all_completion= []
+def _has_tracker_format(df: pd.DataFrame) -> bool:
+    """Return True if df looks like a tracker sheet (has our section headers in col 0)."""
+    for val in df.iloc[:5, 0]:
+        if isinstance(val, str) and "automation status summary" in val.lower():
+            return True
+    return False
 
-    auto_index = 0  # for colour cycling of new sheets
-    for sheet in xl.sheet_names:
-        # Skip explicitly excluded tabs
-        if sheet in TRACKER_SHEETS_SKIP:
-            continue
-        # Skip sheets that don't look like project tabs (no recognised sections)
-        df = xl.parse(sheet, header=None)
 
-        # Locate section boundaries
-        summary_row    = _find_row(df, "Automation Status Summary")
-        nonaut_row     = _find_row(df, "Non-Automatable Test Cases")
-        dayplan_row    = _find_row(df, "Day-by-Day Automation")
-        completion_row = _find_row(df, "Project Completion Plan")
-
-        # Skip sheets with none of the expected sections
-        if all(r is None for r in [summary_row, nonaut_row, dayplan_row, completion_row]):
-            continue
-
-        na_rows   = _rows_between(df, nonaut_row,     dayplan_row)
-        dp_rows   = _rows_between(df, dayplan_row,    completion_row)
-        comp_rows = _rows_between(df, completion_row, None)
-
-        if sheet == "Firmware":
-            _parse_firmware_sheet(
-                df, summary_row, na_rows, dp_rows, comp_rows,
-                all_projects, all_non_auto, all_day_plan, all_completion,
-            )
-        else:
-            # Auto-register sheet if not in known dicts
-            pid = _SHEET_PID.get(sheet) or _sheet_to_pid(sheet)
-            if pid not in _PROJECT_META:
-                _PROJECT_META[pid] = _auto_meta(sheet, auto_index)
-                auto_index += 1
-            if pid not in _PROJ_NAMES:
-                _PROJ_NAMES[pid] = _auto_name(sheet)
-            if sheet not in _SHEET_PID:
-                _SHEET_PID[sheet] = pid
-
-            _parse_single_sheet(
-                sheet, df, summary_row, na_rows, dp_rows, comp_rows,
-                all_projects, all_non_auto, all_day_plan, all_completion,
-            )
-
-    # Write parsed data to MAIN_FILE
-    with pd.ExcelWriter(MAIN_FILE, engine="openpyxl") as writer:
-        pd.DataFrame(all_projects).to_excel(   writer, sheet_name="Projects",        index=False)
-        pd.DataFrame(all_non_auto).to_excel(   writer, sheet_name="Non_Automatable", index=False)
-        pd.DataFrame(all_day_plan).to_excel(   writer, sheet_name="Day_Plan",        index=False)
-        pd.DataFrame(all_completion).to_excel( writer, sheet_name="Completion_Plan", index=False)
-
-    # Upsert completion settings for any new project IDs from this upload.
-    # Existing project settings are preserved; only missing IDs are seeded.
-    _upsert_comp_settings_from_parsed(all_completion)
-
+# ── Firmware sheet parser ──────────────────────────────────────────────────────
 
 def _parse_firmware_sheet(df, summary_row, na_rows, dp_rows, comp_rows,
-                           proj_out, na_out, plan_out, comp_out):
-    for sp in _FIRMWARE_SUBS:
-        pid     = sp["id"]
-        env_key = sp["env_key"]
-        meta    = _PROJECT_META[pid]
+                           proj_out, na_out, plan_out, comp_out, cfg, base_idx):
+    """Parse Firmware sheet — sub-projects discovered dynamically from completion plan."""
+    n_added = 0
 
-        # Filter day plan rows matching this sub-project's environment key
-        sp_dp = [r for r in dp_rows
-                 if _safe_str(r[1]).lower().startswith(env_key.lower()[:6])]
-
-        # Compute automated from max cumulative where actual > 0
-        automated = 0
-        for r in sp_dp:
-            if _parse_int(r[3]) > 0:
-                automated = max(automated, _parse_int(r[4]))
-
-        # Dates from completion plan (match env_key)
-        start_date  = sp["start_date"]
-        target_date = sp["target_date"]
-        status      = sp["status"]
-        for r in comp_rows:
-            name_cell = _safe_str(r[0])
-            if env_key.lower()[:6] in name_cell.lower():
-                start_date  = _parse_date(r[4]) or sp["start_date"]
-                target_date = _parse_date(r[5]) or sp["target_date"]
-                break
-
-        proj_out.append({
-            "id":              pid,
-            "name":            _PROJ_NAMES.get(pid) or _auto_name(sheet),
-            "total_cases":     sp["total_cases"],
-            "automatable":     sp["automatable"],
-            "non_automatable": sp["non_automatable"],
-            "automated":       automated,
-            "in_progress":     0,
-            "team_size":       meta["team_size"],
-            "start_date":      start_date,
-            "target_date":     target_date,
-            "daily_avg":       meta["daily_avg"],
-            "status":          status,
-            "priority":        meta["priority"],
-            "color":           meta["color"],
-            "notes":           "",
-        })
-
-        # Day plan
-        for r in sp_dp:
-            actual = _parse_int(r[3])
-            plan_out.append({
-                "project_id":    pid,
-                "date":          _parse_date(r[0]) or _safe_str(r[0]),
-                "module":        _safe_str(r[2]),
-                "planned_cases": actual if actual > 0 else 0,
-                "actual_cases":  actual,
-                "cumulative":    _parse_int(r[4]),
-                "assigned_to":   _safe_str(r[5]),
-                "remarks":       _safe_str(r[6]) if len(r) > 6 else "",
-                "status":        "Completed" if actual > 0 else "Planned",
-            })
-
-    # Non-automatable (all belong to 1-Phase)
-    for r in na_rows:
-        name = _safe_str(r[0])
-        if not name or name.lower() in ("test case id", "nan"):
-            continue
-        na_out.append({
-            "project_id": "1p",
-            "module":     name,
-            "count":      _count_from_name(name),
-            "reason":     _safe_str(r[2]) if len(r) > 2 else "",
-            "approach":   _safe_str(r[3]) if len(r) > 3 else "",
-        })
-
-    # Completion plan
-    pid_lookup = {"1-phase": "1p", "3-phase wc": "3p_wc",
-                  "3-phase ltct": "3p_ltct", "overall": "overall"}
     for r in comp_rows:
         name = _safe_str(r[0])
         if not name or name.lower() in ("project / environment", "nan"):
             continue
-        pid = next((v for k, v in pid_lookup.items() if k in name.lower()), "firmware")
+
+        pid = _firmware_sub_id(name)
+        if pid is None:
+            # Write Overall row to completion plan but skip as a project
+            comp_out.append({
+                "project_id":          "firmware_overall",
+                "name":                name,
+                "total_cases":         _parse_int(r[1]),
+                "automatable":         _parse_int(r[1]),
+                "duration_days":       _parse_int(r[2]),
+                "daily_avg":           _parse_float(r[3]),
+                "start_date":          _parse_date(r[4]) or _safe_str(r[4]) or "TBD",
+                "expected_completion": _parse_date(r[5]) or _safe_str(r[5]) or "TBD",
+                "status":              _safe_str(r[6]) if len(r) > 6 else "",
+            })
+            continue
+
+        pcfg = _project_cfg(pid, cfg, base_idx + n_added)
+
+        total       = _parse_int(r[1])
+        raw_avg     = _parse_float(r[3])
+        daily_avg   = raw_avg if 0 < raw_avg <= 100 else pcfg.get("daily_avg", 0)
+        start_date  = _parse_date(r[4]) or _safe_str(r[4]) or "TBD"
+        target_date = _parse_date(r[5]) or _safe_str(r[5]) or "TBD"
+        status      = _normalize_status(_safe_str(r[6]) if len(r) > 6 else "")
+
+        # Automated: count day-plan rows that are NOT marked "Planned"
+        env_prefix = _firmware_env_prefix(pid)
+        automated  = 0
+        for dp_r in dp_rows:
+            env_cell = _safe_str(dp_r[1]).lower()
+            if not env_cell.startswith(env_prefix[:6]):
+                continue
+            remarks = _safe_str(dp_r[6]).lower() if len(dp_r) > 6 else ""
+            if "planned" in remarks:
+                continue
+            actual = _parse_int(dp_r[3])
+            if actual > 0:
+                automated = max(automated, _parse_int(dp_r[4]))
+
+        proj_out.append({
+            "id":              pid,
+            "name":            name,
+            "total_cases":     total,
+            "automatable":     total,
+            "non_automatable": 0,
+            "automated":       automated,
+            "in_progress":     0,
+            "team_size":       pcfg.get("team_size", 1),
+            "start_date":      start_date,
+            "target_date":     target_date,
+            "daily_avg":       daily_avg,
+            "status":          status,
+            "priority":        pcfg.get("priority", "High"),
+            "color":           pcfg.get("color", _DEFAULT_PALETTE[(base_idx + n_added) % len(_DEFAULT_PALETTE)]),
+            "notes":           "",
+        })
+
+        # Day plan
+        for dp_r in dp_rows:
+            env_cell = _safe_str(dp_r[1]).lower()
+            if not env_cell.startswith(env_prefix[:6]):
+                continue
+            actual   = _parse_int(dp_r[3])
+            remarks  = _safe_str(dp_r[6]) if len(dp_r) > 6 else ""
+            plan_out.append({
+                "project_id":    pid,
+                "date":          _parse_date(dp_r[0]) or _safe_str(dp_r[0]),
+                "module":        _safe_str(dp_r[2]),
+                "planned_cases": actual,
+                "actual_cases":  actual,
+                "cumulative":    _parse_int(dp_r[4]),
+                "assigned_to":   _safe_str(dp_r[5]) if len(dp_r) > 5 else "",
+                "remarks":       remarks,
+                "status":        "Planned" if "planned" in remarks.lower() else ("Completed" if actual > 0 else "Planned"),
+            })
+
+        # Completion plan row
         comp_out.append({
             "project_id":          pid,
             "name":                name,
-            "total_cases":         _parse_int(r[1]),
-            "automatable":         _parse_int(r[1]),
+            "total_cases":         total,
+            "automatable":         total,
             "duration_days":       _parse_int(r[2]),
             "daily_avg":           _parse_float(r[3]),
-            "start_date":          _parse_date(r[4]) or _safe_str(r[4]),
-            "expected_completion": _parse_date(r[5]) or _safe_str(r[5]),
+            "start_date":          start_date,
+            "expected_completion": target_date,
             "status":              _safe_str(r[6]) if len(r) > 6 else "",
         })
 
+        n_added += 1
+
+    # Non-automatable (firmware non-auto rows belong to 1p if it exists, else firmware)
+    fw_na_pid = "1p" if any(p["id"] == "1p" for p in proj_out) else "firmware"
+    for r in na_rows:
+        name_val = _safe_str(r[0])
+        if not name_val or name_val.lower() in ("test case id", "nan"):
+            continue
+        na_out.append({
+            "project_id": fw_na_pid,
+            "module":     name_val,
+            "count":      _count_from_name(name_val),
+            "reason":     _safe_str(r[2]) if len(r) > 2 else "",
+            "approach":   _safe_str(r[3]) if len(r) > 3 else "",
+        })
+
+    return n_added
+
+
+# ── Single-sheet parser ────────────────────────────────────────────────────────
 
 def _parse_single_sheet(sheet, df, summary_row, na_rows, dp_rows, comp_rows,
-                         proj_out, na_out, plan_out, comp_out):
-    pid  = _SHEET_PID.get(sheet) or _sheet_to_pid(sheet)
-    meta = _PROJECT_META.get(pid) or _auto_meta(sheet)
+                         proj_out, na_out, plan_out, comp_out, cfg, idx):
+    pid  = _slugify(sheet)
+    pcfg = _project_cfg(pid, cfg, idx)
 
-    # Summary row → project numbers
+    # Project name from summary row col 0, fallback to prettified sheet name
+    name = re.sub(r'[_\-]+', ' ', sheet).strip()
     total = automated = non_auto = 0
+
     if summary_row is not None and summary_row + 2 < len(df):
-        sr        = df.iloc[summary_row + 2]
+        sr       = df.iloc[summary_row + 2]
+        raw_name = _safe_str(sr.iloc[0])
+        if raw_name and raw_name.lower() not in ("nan", ""):
+            name = raw_name
         total     = _parse_int(sr.iloc[1])
         automated = _parse_int(sr.iloc[2])
         non_auto  = _parse_int(sr.iloc[4])
 
     automatable = max(0, total - non_auto)
 
-    # Dates + status from completion plan
-    start_date = target_date = ""
-    status = "In Progress"
+    # Dates, daily_avg, and status from first valid completion plan row
+    start_date = target_date = "TBD"
+    daily_avg  = pcfg.get("daily_avg", 0)
+    status     = "In Progress"
     for r in comp_rows:
-        name = _safe_str(r[0])
-        if not name or name.lower() in ("project / environment", "nan"):
+        row_name = _safe_str(r[0])
+        if not row_name or row_name.lower() in ("project / environment", "nan"):
             continue
-        start_date  = _parse_date(r[4]) or _safe_str(r[4])
-        target_date = _parse_date(r[5]) or _safe_str(r[5])
-        raw_status = _safe_str(r[6]) if len(r) > 6 else ""
-        if raw_status.lower() == "scheduled":
-            status = "Not Started"
-        elif raw_status:
-            status = raw_status
-        else:
-            status = "In Progress"
+        raw_avg    = _parse_float(r[3])
+        # cap at 100: values > 100 are likely dates mistaken as numbers (e.g. WFM has 2026-05-26)
+        daily_avg  = raw_avg if 0 < raw_avg <= 100 else pcfg.get("daily_avg", 0)
+        start_raw  = _parse_date(r[4]) or _safe_str(r[4]) or "TBD"
+        target_raw = _parse_date(r[5]) or _safe_str(r[5]) or "TBD"
+        # Reject strings that are clearly notes, not dates (> 20 chars)
+        start_date  = start_raw  if len(start_raw)  <= 20 else "TBD"
+        target_date = target_raw if len(target_raw) <= 20 else "TBD"
+        raw_st     = _safe_str(r[6]) if len(r) > 6 else ""
+        # fallback: some sheets put status in col 2 (e.g. WFM "On Hold")
+        if not raw_st or raw_st.lower() in ("nan", ""):
+            raw_st = _safe_str(r[2]) if len(r) > 2 else ""
+        status = _normalize_status(raw_st)
         break
 
     proj_out.append({
         "id":              pid,
-        "name":            _PROJ_NAMES.get(pid) or _auto_name(sheet),
+        "name":            name,
         "total_cases":     total,
         "automatable":     automatable,
         "non_automatable": non_auto,
         "automated":       automated,
         "in_progress":     0,
-        "team_size":       meta["team_size"],
+        "team_size":       pcfg.get("team_size", 1),
         "start_date":      start_date,
         "target_date":     target_date,
-        "daily_avg":       meta["daily_avg"],
+        "daily_avg":       daily_avg,
         "status":          status,
-        "priority":        meta["priority"],
-        "color":           meta["color"],
+        "priority":        pcfg.get("priority", "Medium"),
+        "color":           pcfg.get("color", _DEFAULT_PALETTE[idx % len(_DEFAULT_PALETTE)]),
         "notes":           "",
     })
 
     # Non-automatable
     for r in na_rows:
-        name = _safe_str(r[0])
-        if not name or name.lower() in ("test case id", "nan"):
+        name_val = _safe_str(r[0])
+        if not name_val or name_val.lower() in ("test case id", "nan"):
             continue
         na_out.append({
             "project_id": pid,
-            "module":     name,
-            "count":      _count_from_name(name),
+            "module":     name_val,
+            "count":      _count_from_name(name_val),
             "reason":     _safe_str(r[2]) if len(r) > 2 else "",
             "approach":   _safe_str(r[3]) if len(r) > 3 else "",
         })
@@ -399,27 +391,27 @@ def _parse_single_sheet(sheet, df, summary_row, na_rows, dp_rows, comp_rows,
         if all(_safe_str(v) == "" for v in r[:5]):
             continue
         actual  = _parse_int(r[3])
-        planned = actual if actual > 0 else 0
+        remarks = _safe_str(r[6]) if len(r) > 6 else ""
         plan_out.append({
             "project_id":    pid,
             "date":          _parse_date(r[0]) or _safe_str(r[0]),
             "module":        _safe_str(r[2]),
-            "planned_cases": planned,
+            "planned_cases": actual if actual > 0 else 0,
             "actual_cases":  actual,
             "cumulative":    _parse_int(r[4]),
             "assigned_to":   _safe_str(r[5]) if len(r) > 5 else "",
-            "remarks":       _safe_str(r[6]) if len(r) > 6 else "",
-            "status":        "Completed" if actual > 0 else "Planned",
+            "remarks":       remarks,
+            "status":        "Planned" if "planned" in remarks.lower() else ("Completed" if actual > 0 else "Planned"),
         })
 
     # Completion plan
     for r in comp_rows:
-        name = _safe_str(r[0])
-        if not name or name.lower() in ("project / environment", "nan"):
+        row_name = _safe_str(r[0])
+        if not row_name or row_name.lower() in ("project / environment", "nan"):
             continue
         comp_out.append({
             "project_id":          pid,
-            "name":                name,
+            "name":                row_name,
             "total_cases":         _parse_int(r[1]),
             "automatable":         max(0, _parse_int(r[1]) - non_auto),
             "duration_days":       _parse_int(r[2]),
@@ -430,38 +422,83 @@ def _parse_single_sheet(sheet, df, summary_row, na_rows, dp_rows, comp_rows,
         })
 
 
-# ── Fallback defaults (used when no tracker file exists) ──────────────────────
+# ── Core tracker parser ────────────────────────────────────────────────────────
+
+def _parse_and_save_tracker(tracker_path: Path) -> None:
+    """Parse all tracker sheets dynamically and write to MAIN_FILE."""
+    xl  = pd.ExcelFile(tracker_path)
+    cfg = _load_project_config()
+
+    all_projects  = []
+    all_non_auto  = []
+    all_day_plan  = []
+    all_completion= []
+    proj_idx      = 0
+
+    for sheet in xl.sheet_names:
+        df = xl.parse(sheet, header=None)
+        if not _has_tracker_format(df):
+            continue
+
+        summary_row    = _find_row(df, "Automation Status Summary")
+        nonaut_row     = _find_row(df, "Non-Automatable Test Cases")
+        dayplan_row    = _find_row(df, "Day-by-Day Automation")
+        completion_row = _find_row(df, "Project Completion Plan")
+
+        na_rows   = _rows_between(df, nonaut_row,     dayplan_row)
+        dp_rows   = _rows_between(df, dayplan_row,    completion_row)
+        comp_rows = _rows_between(df, completion_row, None)
+
+        if sheet == "Firmware":
+            n = _parse_firmware_sheet(
+                df, summary_row, na_rows, dp_rows, comp_rows,
+                all_projects, all_non_auto, all_day_plan, all_completion,
+                cfg, proj_idx,
+            )
+            proj_idx += n
+        else:
+            _parse_single_sheet(
+                sheet, df, summary_row, na_rows, dp_rows, comp_rows,
+                all_projects, all_non_auto, all_day_plan, all_completion,
+                cfg, proj_idx,
+            )
+            proj_idx += 1
+
+    _save_project_config(cfg)
+
+    with pd.ExcelWriter(MAIN_FILE, engine="openpyxl") as writer:
+        pd.DataFrame(all_projects).to_excel(   writer, sheet_name="Projects",        index=False)
+        pd.DataFrame(all_non_auto).to_excel(   writer, sheet_name="Non_Automatable", index=False)
+        pd.DataFrame(all_day_plan).to_excel(   writer, sheet_name="Day_Plan",        index=False)
+        pd.DataFrame(all_completion).to_excel( writer, sheet_name="Completion_Plan", index=False)
+
+
+# ── Fallback seed (used only when no tracker file exists at all) ───────────────
 
 def _create_sample_excel() -> None:
-    """Seed automation_data.xlsx from hardcoded defaults."""
     rows_proj = [
-        {"id":"1p",           "name":"1-Phase Meter Firmware",    "total_cases":523, "automatable":393,"non_automatable":130,"automated":0,"in_progress":0,"team_size":1,"start_date":"2026-07-13","target_date":"2026-08-31","daily_avg":8, "status":"In Progress","priority":"High",  "color":"#1645a4","notes":"Assigned to Saloni Sisodiya."},
-        {"id":"3p_wc",        "name":"3-Phase WC",                "total_cases":454, "automatable":454,"non_automatable":0,  "automated":0,"in_progress":0,"team_size":1,"start_date":"2026-09-01","target_date":"2026-12-31","daily_avg":0, "status":"Not Started","priority":"Medium","color":"#02c9a8","notes":"Automation planning pending."},
-        {"id":"3p_ltct",      "name":"3-Phase LTCT",              "total_cases":455, "automatable":455,"non_automatable":0,  "automated":0,"in_progress":0,"team_size":1,"start_date":"2026-09-01","target_date":"2026-12-31","daily_avg":0, "status":"Not Started","priority":"Medium","color":"#37aafe","notes":"Automation planning pending."},
-        {"id":"hes",          "name":"HES (Gomati / Sangai)",     "total_cases":336, "automatable":330,"non_automatable":6,  "automated":180,"in_progress":0,"team_size":1,"start_date":"2026-06-19","target_date":"2026-08-07","daily_avg":4,"status":"In Progress","priority":"High","color":"#7c3aed","notes":"Assigned to Arpit Jain."},
-        {"id":"vee",          "name":"VEE (Gomati / Sangai)",     "total_cases":812, "automatable":584,"non_automatable":228,"automated":0,"in_progress":0,"team_size":1,"start_date":"2026-07-10","target_date":"2026-08-31","daily_avg":0, "status":"In Progress","priority":"High","color":"#0891b2","notes":"MDMS V1 stopped; updating for new DB."},
-        {"id":"consumer_app", "name":"Consumer App (Gomati Android)","total_cases":81,"automatable":81,"non_automatable":0, "automated":2,"in_progress":0,"team_size":1,"start_date":"2026-07-03","target_date":"2026-09-30","daily_avg":1, "status":"In Progress","priority":"Medium","color":"#db2777","notes":"Assigned to Komal Singhal."},
-        {"id":"comms",        "name":"Comms (4G / RF / IMG / DCU)","total_cases":86,"automatable":60,"non_automatable":26, "automated":20,"in_progress":0,"team_size":1,"start_date":"2026-07-07","target_date":"2026-07-24","daily_avg":3, "status":"In Progress","priority":"High","color":"#ea580c","notes":"Assigned to Saloni Sisodiya."},
-        {"id":"wfm",          "name":"WFM Portal – Stage (UP)",  "total_cases":249, "automatable":243,"non_automatable":6,  "automated":103,"in_progress":0,"team_size":1,"start_date":"2026-08-06","target_date":"2026-10-30","daily_avg":4,"status":"Not Started","priority":"Medium","color":"#059669","notes":"Assigned to Shruti Singh."},
-    ]
-    rows_comp = [
-        {"project_id":"1p",      "name":"1-Phase Meter Firmware","total_cases":523,"automatable":393,"duration_days":50,"daily_avg":8,"start_date":"2026-07-13","expected_completion":"2026-08-31","status":"On Track"},
-        {"project_id":"3p_wc",   "name":"3-Phase WC",           "total_cases":454,"automatable":454,"duration_days":0, "daily_avg":0,"start_date":"TBD",       "expected_completion":"TBD",        "status":"Planning Pending"},
-        {"project_id":"3p_ltct", "name":"3-Phase LTCT",         "total_cases":455,"automatable":455,"duration_days":0, "daily_avg":0,"start_date":"TBD",       "expected_completion":"TBD",        "status":"Planning Pending"},
-        {"project_id":"hes",     "name":"HES (Gomati/Sangai)",  "total_cases":336,"automatable":330,"duration_days":50,"daily_avg":4,"start_date":"2026-06-19","expected_completion":"2026-08-07", "status":"On Track"},
-        {"project_id":"vee",     "name":"VEE (Gomati/Sangai)",  "total_cases":812,"automatable":584,"duration_days":45,"daily_avg":0,"start_date":"2026-07-10","expected_completion":"2026-08-31", "status":"In Progress"},
-        {"project_id":"consumer_app","name":"Consumer App",     "total_cases":81, "automatable":81, "duration_days":89,"daily_avg":1,"start_date":"2026-07-03","expected_completion":"2026-09-30", "status":"On Track"},
-        {"project_id":"comms",   "name":"Comms (4G/RF/IMG/DCU)","total_cases":86,"automatable":60, "duration_days":18,"daily_avg":3,"start_date":"2026-07-07","expected_completion":"2026-07-24", "status":"On Track"},
-        {"project_id":"wfm",     "name":"WFM Portal Overall",   "total_cases":243,"automatable":243,"duration_days":84,"daily_avg":4,"start_date":"2026-08-06","expected_completion":"2026-10-30", "status":"Scheduled"},
+        {"id":"1p",            "name":"1-Phase Meter Firmware",       "total_cases":781,  "automatable":781, "non_automatable":0,  "automated":0,"in_progress":0,"team_size":1,"start_date":"2026-09-16","target_date":"2027-02-28","daily_avg":5, "status":"Not Started",    "priority":"High",  "color":"#1645a4","notes":""},
+        {"id":"3p_wc",         "name":"3-Phase WC",                   "total_cases":454,  "automatable":454, "non_automatable":0,  "automated":0,"in_progress":0,"team_size":1,"start_date":"TBD",       "target_date":"TBD",       "daily_avg":0, "status":"Not Started",    "priority":"Medium","color":"#02c9a8","notes":""},
+        {"id":"3p_ltct",       "name":"3-Phase LTCT",                 "total_cases":455,  "automatable":455, "non_automatable":0,  "automated":0,"in_progress":0,"team_size":1,"start_date":"TBD",       "target_date":"TBD",       "daily_avg":0, "status":"Not Started",    "priority":"Medium","color":"#37aafe","notes":""},
+        {"id":"hes_sangai",    "name":"Sangai",                       "total_cases":164,  "automatable":158, "non_automatable":6,  "automated":81,"in_progress":0,"team_size":1,"start_date":"2026-06-19","target_date":"2026-08-18","daily_avg":3, "status":"Delayed",       "priority":"High",  "color":"#7c3aed","notes":""},
+        {"id":"hes_goamti",    "name":"HES-Gomati",                   "total_cases":164,  "automatable":158, "non_automatable":6,  "automated":120,"in_progress":0,"team_size":1,"start_date":"2026-06-19","target_date":"2026-08-05","daily_avg":3,"status":"Delayed",       "priority":"High",  "color":"#0891b2","notes":""},
+        {"id":"display_automation","name":"Smart Meter / Jig",        "total_cases":14,   "automatable":14,  "non_automatable":0,  "automated":14,"in_progress":0,"team_size":1,"start_date":"2026-06-22","target_date":"2026-08-03","daily_avg":2, "status":"Completed",     "priority":"Medium","color":"#db2777","notes":""},
+        {"id":"vee",           "name":"VEE (Gomati / Sangai)",        "total_cases":603,  "automatable":571, "non_automatable":32, "automated":460,"in_progress":0,"team_size":1,"start_date":"2026-07-10","target_date":"2026-09-11","daily_avg":0,"status":"Delayed",       "priority":"High",  "color":"#ea580c","notes":""},
+        {"id":"consumer_app",  "name":"Consumer App (Gomati Android)","total_cases":81,   "automatable":81,  "non_automatable":0,  "automated":17,"in_progress":0,"team_size":1,"start_date":"2026-07-03","target_date":"2026-09-30","daily_avg":1, "status":"In Progress",   "priority":"Medium","color":"#059669","notes":""},
+        {"id":"comms",         "name":"Comms (4G / RF / IMG / DCU)", "total_cases":86,   "automatable":60,  "non_automatable":26, "automated":18,"in_progress":0,"team_size":1,"start_date":"2026-07-07","target_date":"2026-09-15","daily_avg":3, "status":"Delayed",       "priority":"High",  "color":"#f59e0b","notes":""},
+        {"id":"wfm",           "name":"WFM Portal Stage",             "total_cases":278,  "automatable":123, "non_automatable":155,"automated":117,"in_progress":0,"team_size":1,"start_date":"TBD",       "target_date":"TBD",       "daily_avg":0,"status":"On Hold",       "priority":"Medium","color":"#64748b","notes":""},
+        {"id":"meter_setu",    "name":"Meter Setu (Gomati)",          "total_cases":90,   "automatable":89,  "non_automatable":1,  "automated":0,"in_progress":0,"team_size":1,"start_date":"2026-08-04","target_date":"2026-09-30","daily_avg":2, "status":"Not Started",   "priority":"Medium","color":"#dc2626","notes":""},
     ]
     with pd.ExcelWriter(MAIN_FILE, engine="openpyxl") as writer:
-        pd.DataFrame(rows_proj).to_excel( writer, sheet_name="Projects",        index=False)
+        pd.DataFrame(rows_proj).to_excel(writer, sheet_name="Projects", index=False)
         pd.DataFrame(columns=["project_id","module","count","reason","approach"]
             ).to_excel(writer, sheet_name="Non_Automatable", index=False)
         pd.DataFrame(columns=["project_id","date","module","planned_cases","actual_cases",
                                "cumulative","assigned_to","remarks","status"]
-            ).to_excel(writer, sheet_name="Day_Plan",        index=False)
-        pd.DataFrame(rows_comp).to_excel( writer, sheet_name="Completion_Plan", index=False)
+            ).to_excel(writer, sheet_name="Day_Plan", index=False)
+        pd.DataFrame(columns=["project_id","name","total_cases","automatable","duration_days",
+                               "daily_avg","start_date","expected_completion","status"]
+            ).to_excel(writer, sheet_name="Completion_Plan", index=False)
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -469,9 +506,18 @@ def _create_sample_excel() -> None:
 def ensure_data_file() -> None:
     """
     Sync strategy:
-      - If TRACKER_FILE exists and is newer than MAIN_FILE → re-parse tracker
-      - Else if MAIN_FILE missing → seed from defaults
+      1. If root Automation tracker.xlsx exists and is newer than internal tracker → copy it
+      2. If TRACKER_FILE exists and is newer than MAIN_FILE → re-parse tracker
+      3. Else if MAIN_FILE missing → seed from defaults
     """
+    # Auto-import tracker from project root if it's newer than what's in data/
+    if ROOT_TRACKER.exists() and ROOT_TRACKER.stat().st_size > 1024:
+        root_mtime    = ROOT_TRACKER.stat().st_mtime
+        tracker_mtime = TRACKER_FILE.stat().st_mtime if TRACKER_FILE.exists() else 0
+        if root_mtime > tracker_mtime:
+            import shutil
+            shutil.copy2(ROOT_TRACKER, TRACKER_FILE)
+
     if TRACKER_FILE.exists() and TRACKER_FILE.stat().st_size > 1024:
         tracker_mtime  = TRACKER_FILE.stat().st_mtime
         internal_mtime = MAIN_FILE.stat().st_mtime if MAIN_FILE.exists() else 0
@@ -486,7 +532,6 @@ def ensure_data_file() -> None:
 
 
 def _safe_date(v) -> str:
-    """Return ISO date string, 'TBD' for unparseable/missing, never NaT."""
     if v is None or v is pd.NaT:
         return "TBD"
     s = str(v).strip()
@@ -556,176 +601,16 @@ def save_day_plan(project_id: str, df: pd.DataFrame) -> None:
         updated.to_excel(writer, sheet_name="Day_Plan", index=False)
 
 
-def _upsert_comp_settings_from_parsed(comp_rows: list) -> None:
-    """Upsert completion_settings.json from parsed rows.
-    For new IDs: seed from Excel. For existing IDs: update expected_completion
-    from Excel but preserve user-editable fields (daily_avg, start_date, status)."""
-    settings = _load_comp_settings()
-    changed = False
-    for row in comp_rows:
-        pid = str(row.get("project_id", "")).strip()
-        if not pid:
-            continue
-        ec_raw = str(row.get("expected_completion", "") or "")
-        ec = "TBD"
-        if ec_raw.lower() not in ("nan", "none", "tbd", ""):
-            try:
-                ec = pd.to_datetime(ec_raw).strftime("%Y-%m-%d")
-            except Exception:
-                pass  # leave as TBD if unparseable
-        if pid in settings:
-            # Only refresh expected_completion from Excel when it's a real date;
-            # never overwrite a good stored date with TBD.
-            if ec != "TBD" and settings[pid].get("expected_completion") != ec:
-                settings[pid]["expected_completion"] = ec
-                changed = True
-        else:
-            daily_avg  = float(row.get("daily_avg",  0) or 0)
-            start_date = str(row.get("start_date",   "TBD") or "TBD")
-            status     = str(row.get("status",       "Not Started") or "Not Started")
-            if status.lower() in ("nan", "none", ""):
-                status = "Not Started"
-            settings[pid] = {
-                "daily_avg": daily_avg,
-                "start_date": start_date,
-                "status": status,
-                "expected_completion": ec,
-            }
-            changed = True
-    if changed:
-        _save_comp_settings(settings)
-
-
-def _migrate_comp_settings_from_excel() -> None:
-    """One-time migration: seed JSON store from old Completion_Plan Excel sheet."""
-    if COMP_SETTINGS_FILE.exists():
-        return
-    try:
-        xl = pd.ExcelFile(MAIN_FILE)
-        if "Completion_Plan" not in xl.sheet_names:
-            return
-        df = pd.read_excel(MAIN_FILE, sheet_name="Completion_Plan")
-        settings = {}
-        for _, row in df.iterrows():
-            pid = str(row.get("project_id", ""))
-            if pid:
-                settings[pid] = {
-                    "daily_avg":  float(row.get("daily_avg", 0) or 0),
-                    "start_date": str(row.get("start_date", "TBD")),
-                    "status":     str(row.get("status", "Not Started")),
-                }
-        _save_comp_settings(settings)
-    except Exception:
-        pass
-
-
-def _load_comp_settings() -> dict:
-    """Load editable per-project settings from JSON store."""
-    if COMP_SETTINGS_FILE.exists():
-        try:
-            return json.loads(COMP_SETTINGS_FILE.read_text())
-        except Exception:
-            pass
-    return {}
-
-
-def _save_comp_settings(settings: dict) -> None:
-    COMP_SETTINGS_FILE.write_text(json.dumps(settings, indent=2, default=str))
-
-
-def load_completion_plan(df_projects: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-    """
-    Build the Completion Plan by merging live project data with stored
-    user settings (daily_avg, start_date, status).  All other columns
-    (total_cases, automatable, automated, pending, duration_days,
-    expected_completion, progress_pct) are computed dynamically so they
-    always reflect the latest edits to project rows.
-
-    Falls back to the Excel sheet if df_projects is not provided
-    (e.g. called from app.py before projects are loaded).
-    """
-    if df_projects is None:
-        ensure_data_file()
-        try:
-            df_projects = pd.read_excel(MAIN_FILE, sheet_name="Projects")
-        except Exception:
-            return pd.DataFrame()
-
-    _migrate_comp_settings_from_excel()
-    settings = _load_comp_settings()
-    rows = []
-    for _, p in df_projects.iterrows():
-        pid        = str(p.get("id", ""))
-        cfg        = settings.get(pid, {})
-        total      = int(p.get("total_cases",    0) or 0)
-        automatable= int(p.get("automatable",    0) or 0)
-        automated  = int(p.get("automated",      0) or 0)
-        pending    = max(automatable - automated, 0)
-        daily_avg  = float(cfg.get("daily_avg",  0) or 0)
-        start_date = cfg.get("start_date", "TBD")
-        status     = cfg.get("status", "Not Started")
-
-        # Use Excel-supplied expected_completion if stored; derive duration from it.
-        # Fall back to computing from pending/daily_avg only when not available.
-        stored_ec = cfg.get("expected_completion", "TBD") or "TBD"
-        if stored_ec.lower() in ("nan", "none", ""):
-            stored_ec = "TBD"
-
-        expected_completion = "TBD"
-        duration_days = 0
-
-        if stored_ec != "TBD" and start_date and start_date != "TBD":
-            try:
-                sd = pd.to_datetime(start_date)
-                ec = pd.to_datetime(stored_ec)
-                duration_days = max(0, (ec - sd).days)
-                expected_completion = ec.strftime("%Y-%m-%d")
-            except Exception:
-                pass
-
-        if expected_completion == "TBD" and daily_avg > 0 and pending > 0:
-            duration_days = math.ceil(pending / daily_avg)
-            if start_date and start_date != "TBD":
-                try:
-                    sd = pd.to_datetime(start_date)
-                    expected_completion = (sd + pd.Timedelta(days=duration_days)).strftime("%Y-%m-%d")
-                except Exception:
-                    pass
-
-        progress_pct = round((automated / automatable * 100) if automatable > 0 else 0, 1)
-
-        rows.append({
-            "project_id":          pid,
-            "name":                str(p.get("name", "")),
-            "total_cases":         total,
-            "automatable":         automatable,
-            "automated":           automated,
-            "pending":             pending,
-            "progress_pct":        progress_pct,
-            "daily_avg":           daily_avg,
-            "start_date":          start_date,
-            "duration_days":       duration_days,
-            "expected_completion": expected_completion,
-            "status":              status,
-        })
-    return pd.DataFrame(rows)
+def load_completion_plan() -> pd.DataFrame:
+    ensure_data_file()
+    return pd.read_excel(MAIN_FILE, sheet_name="Completion_Plan")
 
 
 def save_completion_plan(df: pd.DataFrame) -> None:
-    """Persist editable fields to JSON store, preserving expected_completion from Excel."""
-    settings = _load_comp_settings()
-    for _, row in df.iterrows():
-        pid = str(row.get("project_id", ""))
-        if not pid:
-            continue
-        existing_ec = settings.get(pid, {}).get("expected_completion", "TBD")
-        settings[pid] = {
-            "daily_avg":           float(row.get("daily_avg", 0) or 0),
-            "start_date":          str(row.get("start_date", "TBD")),
-            "status":              str(row.get("status", "Not Started")),
-            "expected_completion": existing_ec,
-        }
-    _save_comp_settings(settings)
+    ensure_data_file()
+    with pd.ExcelWriter(MAIN_FILE, engine="openpyxl", mode="a",
+                        if_sheet_exists="replace") as writer:
+        df.to_excel(writer, sheet_name="Completion_Plan", index=False)
 
 
 def process_uploaded_file(uploaded_file):
@@ -743,7 +628,7 @@ def process_uploaded_file(uploaded_file):
                 for _, row in df.iterrows():
                     pid = str(row.get("id", "")).strip()
                     if pid in existing["id"].values:
-                        for col in ["automated", "in_progress", "non_automatable", "status", "notes"]:
+                        for col in ["automated","in_progress","non_automatable","status","notes"]:
                             if col in row and col in existing.columns:
                                 existing.loc[existing["id"] == pid, col] = row[col]
                 save_projects(existing)
@@ -752,22 +637,11 @@ def process_uploaded_file(uploaded_file):
 
         xl = pd.ExcelFile(uploaded_file)
 
-        # ── Detect tracker format ─────────────────────────────────────────────
-        # Detect tracker: any known core sheet OR any sheet with expected sections
-        xl_sheets = set(xl.sheet_names)
-        is_tracker = bool(TRACKER_SHEETS_CORE & xl_sheets)
-        if not is_tracker:
-            # Check if any sheet has the tracker section markers
-            for sname in xl_sheets - TRACKER_SHEETS_SKIP:
-                try:
-                    _df = xl.parse(sname, header=None)
-                    if _find_row(_df, "Automation Status Summary") is not None:
-                        is_tracker = True
-                        break
-                except Exception:
-                    pass
+        # ── Detect tracker format: any sheet with "Automation Status Summary" header ──
+        tracker_sheets = [s for s in xl.sheet_names
+                          if _has_tracker_format(xl.parse(s, header=None))]
 
-        if is_tracker:
+        if tracker_sheets:
             if hasattr(uploaded_file, "getvalue"):
                 raw = uploaded_file.getvalue()
             else:
@@ -776,10 +650,7 @@ def process_uploaded_file(uploaded_file):
             with open(TRACKER_FILE, "wb") as f:
                 f.write(raw)
             _parse_and_save_tracker(TRACKER_FILE)
-            # Report all sheets that were parsed (core + new)
-            parsed = sorted(s for s in xl.sheet_names
-                            if s not in TRACKER_SHEETS_SKIP)
-            return True, f"✅ Tracker imported ({', '.join(parsed)}). Dashboard updated from live data."
+            return True, f"✅ Tracker imported ({', '.join(tracker_sheets)}). Dashboard updated."
 
         # ── Dashboard internal format ─────────────────────────────────────────
         internal_sheets = {"Projects", "Non_Automatable", "Day_Plan", "Completion_Plan"}
@@ -795,7 +666,7 @@ def process_uploaded_file(uploaded_file):
             return True, "Imported: " + " | ".join(msgs)
         return False, (
             f"No matching sheets found. Sheets in file: {xl.sheet_names}. "
-            f"Expected one of: {sorted(TRACKER_SHEETS)} or {sorted(internal_sheets)}."
+            f"Expected sheets with 'Automation Status Summary' header or internal format."
         )
 
     except Exception as e:
@@ -803,45 +674,40 @@ def process_uploaded_file(uploaded_file):
 
 
 def get_tracker_download() -> bytes:
-    """
-    Return the tracker xlsx for download.
-    If the original uploaded tracker exists, serve it directly (preserves all formatting).
-    Otherwise reconstruct from internal data in the same multi-sheet structure.
-    """
+    """Return tracker xlsx for download (original if available)."""
     if TRACKER_FILE.exists() and TRACKER_FILE.stat().st_size > 1024:
         return TRACKER_FILE.read_bytes()
 
     # Reconstruct from internal data
     ensure_data_file()
-    proj   = pd.read_excel(MAIN_FILE, sheet_name="Projects")
-    non    = pd.read_excel(MAIN_FILE, sheet_name="Non_Automatable")
-    plan   = pd.read_excel(MAIN_FILE, sheet_name="Day_Plan")
-    comp   = pd.read_excel(MAIN_FILE, sheet_name="Completion_Plan")
+    proj = pd.read_excel(MAIN_FILE, sheet_name="Projects")
+    non  = pd.read_excel(MAIN_FILE, sheet_name="Non_Automatable")
+    plan = pd.read_excel(MAIN_FILE, sheet_name="Day_Plan")
+    comp = pd.read_excel(MAIN_FILE, sheet_name="Completion_Plan")
 
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        # --- Firmware sheet ---
-        fw_proj  = proj[proj["id"].isin(["1p","3p_wc","3p_ltct"])]
-        fw_non   = non[non["project_id"] == "1p"]
-        fw_plan  = plan[plan["project_id"].isin(["1p","3p_wc","3p_ltct"])]
-        fw_comp  = comp[comp["project_id"].isin(["1p","3p_wc","3p_ltct","overall","firmware"])]
-        _write_tracker_sheet(writer, "Firmware", fw_proj, fw_non, fw_plan, fw_comp)
+        fw_pids = ["1p", "3p_wc", "3p_ltct"]
+        _write_tracker_sheet(writer, "Firmware",
+            proj[proj["id"].isin(fw_pids)],
+            non[non["project_id"].isin(fw_pids)],
+            plan[plan["project_id"].isin(fw_pids)],
+            comp[comp["project_id"].isin(fw_pids + ["firmware_overall"])])
 
-        # --- Single-project sheets ---
-        for sheet, pid in _SHEET_PID.items():
-            sp = proj[proj["id"] == pid]
-            sn = non[non["project_id"] == pid]
-            sd = plan[plan["project_id"] == pid]
-            sc = comp[comp["project_id"] == pid]
-            _write_tracker_sheet(writer, sheet, sp, sn, sd, sc)
-
+        for pid in proj["id"]:
+            if pid in fw_pids:
+                continue
+            _write_tracker_sheet(writer, pid,
+                proj[proj["id"] == pid],
+                non[non["project_id"] == pid],
+                plan[plan["project_id"] == pid],
+                comp[comp["project_id"] == pid])
     return buf.getvalue()
 
 
 def _write_tracker_sheet(writer, sheet_name, proj_df, non_df, plan_df, comp_df):
-    """Write one sheet in the 4-section tracker format."""
     from openpyxl.styles import Font, PatternFill, Alignment
-    from openpyxl.utils import get_column_letter
+    from openpyxl.utils  import get_column_letter
 
     wb = writer.book
     ws = wb.create_sheet(sheet_name)
@@ -850,12 +716,11 @@ def _write_tracker_sheet(writer, sheet_name, proj_df, non_df, plan_df, comp_df):
     hdr_font  = Font(bold=True, color="FFFFFF", name="Calibri", size=11)
     sec_fill  = PatternFill("solid", fgColor="1645A4")
     sec_font  = Font(bold=True, color="FFFFFF", name="Calibri", size=11)
-    bold_font = Font(bold=True, name="Calibri", size=10)
     norm_font = Font(name="Calibri", size=10)
 
     row = 1
 
-    def _write_section_header(title):
+    def _write_section(title):
         nonlocal row
         ws.cell(row, 1, title).font = sec_font
         ws.cell(row, 1).fill = sec_fill
@@ -863,48 +728,37 @@ def _write_tracker_sheet(writer, sheet_name, proj_df, non_df, plan_df, comp_df):
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=8)
         row += 1
 
-    def _write_df(df, col_names):
+    def _write_df(df, cols):
         nonlocal row
-        for ci, col in enumerate(col_names, 1):
+        for ci, col in enumerate(cols, 1):
             c = ws.cell(row, ci, col)
-            c.font = hdr_font
-            c.fill = hdr_fill
+            c.font = hdr_font; c.fill = hdr_fill
         row += 1
         for _, r in df.iterrows():
-            for ci, col in enumerate(col_names, 1):
+            for ci, col in enumerate(cols, 1):
                 val = r.get(col, "")
                 if val is None or (isinstance(val, float) and val != val):
                     val = ""
                 ws.cell(row, ci, val).font = norm_font
             row += 1
-        row += 1  # blank separator
+        row += 1
 
-    # 1. Automation Status Summary
-    _write_section_header("Automation Status Summary")
-    summary_cols = ["id","name","total_cases","automatable","non_automatable","automated","in_progress","status"]
-    avail = [c for c in summary_cols if c in proj_df.columns]
+    _write_section("Automation Status Summary")
+    avail = [c for c in ["id","name","total_cases","automatable","non_automatable","automated","in_progress","status"] if c in proj_df.columns]
     _write_df(proj_df[avail], avail)
 
-    # 2. Non-Automatable Test Cases
-    _write_section_header("Non-Automatable Test Cases")
-    na_cols = ["module","count","reason","approach"]
-    avail_na = [c for c in na_cols if c in non_df.columns]
-    _write_df(non_df[avail_na] if avail_na else non_df, avail_na or list(non_df.columns))
+    _write_section("Non-Automatable Test Cases")
+    na_cols = [c for c in ["module","count","reason","approach"] if c in non_df.columns]
+    _write_df(non_df[na_cols] if na_cols else non_df, na_cols or list(non_df.columns))
 
-    # 3. Day-by-Day Automation Plan
-    _write_section_header("Day-by-Day Automation Plan")
-    dp_cols = ["date","project_id","module","actual_cases","cumulative","assigned_to","remarks","status"]
-    avail_dp = [c for c in dp_cols if c in plan_df.columns]
-    _write_df(plan_df[avail_dp] if avail_dp else plan_df, avail_dp or list(plan_df.columns))
+    _write_section("Day-by-Day Automation Plan")
+    dp_cols = [c for c in ["date","project_id","module","actual_cases","cumulative","assigned_to","remarks","status"] if c in plan_df.columns]
+    _write_df(plan_df[dp_cols] if dp_cols else plan_df, dp_cols or list(plan_df.columns))
 
-    # 4. Project Completion Plan
-    _write_section_header("Project Completion Plan")
-    cp_cols = ["project_id","name","total_cases","automatable","duration_days","daily_avg",
-               "start_date","expected_completion","status"]
-    avail_cp = [c for c in cp_cols if c in comp_df.columns]
-    _write_df(comp_df[avail_cp] if avail_cp else comp_df, avail_cp or list(comp_df.columns))
+    _write_section("Project Completion Plan")
+    cp_cols = [c for c in ["project_id","name","total_cases","automatable","duration_days","daily_avg","start_date","expected_completion","status"] if c in comp_df.columns]
+    _write_df(comp_df[cp_cols] if cp_cols else comp_df, cp_cols or list(comp_df.columns))
 
-    # Auto-width columns
     for col_cells in ws.columns:
         max_len = max((len(str(c.value or "")) for c in col_cells), default=8)
         ws.column_dimensions[get_column_letter(col_cells[0].column)].width = min(max_len + 4, 40)
