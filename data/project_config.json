@@ -1,0 +1,86 @@
+{
+  "1p": {
+    "color": "#1645a4",
+    "priority": "Medium",
+    "team_size": 1,
+    "daily_avg": 0
+  },
+  "3p_wc": {
+    "color": "#02c9a8",
+    "priority": "Medium",
+    "team_size": 1,
+    "daily_avg": 0
+  },
+  "3p_ltct": {
+    "color": "#37aafe",
+    "priority": "Medium",
+    "team_size": 1,
+    "daily_avg": 0
+  },
+  "hes_sangai": {
+    "color": "#7c3aed",
+    "priority": "Medium",
+    "team_size": 1,
+    "daily_avg": 0
+  },
+  "hes_goamti": {
+    "color": "#0891b2",
+    "priority": "Medium",
+    "team_size": 1,
+    "daily_avg": 0
+  },
+  "display_automation": {
+    "color": "#db2777",
+    "priority": "Medium",
+    "team_size": 1,
+    "daily_avg": 0
+  },
+  "vee": {
+    "color": "#ea580c",
+    "priority": "Medium",
+    "team_size": 1,
+    "daily_avg": 0
+  },
+  "consumer_app": {
+    "color": "#059669",
+    "priority": "Medium",
+    "team_size": 1,
+    "daily_avg": 0
+  },
+  "comms": {
+    "color": "#f59e0b",
+    "priority": "Medium",
+    "team_size": 1,
+    "daily_avg": 0
+  },
+  "wfm": {
+    "color": "#64748b",
+    "priority": "Medium",
+    "team_size": 1,
+    "daily_avg": 0
+  },
+  "meter_setu": {
+    "color": "#dc2626",
+    "priority": "Medium",
+    "team_size": 1,
+    "daily_avg": 0
+  },
+  "firmware_single_phase": {
+    "color": "#db2777",
+    "priority": "Medium",
+    "team_size": 1,
+    "daily_avg": 0
+  },
+  "firmware_wc_ltct": {
+    "color": "#ea580c",
+    "priority": "Medium",
+    "team_size": 1,
+    "daily_avg": 0
+  },
+  "gomati_mdms_rms": {
+    "color": "#64748b",
+    "priority": "Medium",
+    "team_size": 1,
+    "daily_avg": 0
+  }
+}

@@ -136,7 +136,7 @@ def _safe_str(val) -> str:
 
 def _find_row(df: pd.DataFrame, keyword: str) -> Optional[int]:
     for i, val in enumerate(df.iloc[:, 0]):
-        if isinstance(val, str) and keyword.lower() in val.lower():
+        if isinstance(val, str) and keyword.lower() in val.replace('\xa0', ' ').lower():
             return i
     return None
 
@@ -175,7 +175,7 @@ def _normalize_status(raw: str) -> str:
         return "On Hold"
     if r == "delayed":
         return "Delayed"
-    if "on track" in r:
+    if "on track" in r or "on time" in r:
         return "On Track"
     if "in progress" in r or "progress" in r:
         return "In Progress"
@@ -554,6 +554,8 @@ def load_projects() -> pd.DataFrame:
             df[col] = df[col].apply(_safe_date)
     if "status" in df.columns:
         df["status"] = df["status"].fillna("In Progress").replace("", "In Progress")
+    if "notes" in df.columns:
+        df["notes"] = df["notes"].fillna("")
     return df
 
 
