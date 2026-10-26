@@ -28,18 +28,19 @@ def kpi_row(metrics: list) -> None:
 
 
 def portfolio_kpi_row(summary: dict, dark_mode: bool = False) -> None:
-    cov = summary["coverage_pct"]
+    overall = summary.get("overall_coverage_pct", summary["coverage_pct"])
+    auto_prog = summary["coverage_pct"]
     metrics = [
-        {"label": "Total Test Cases",    "value": f"{summary['total_cases']:,}",
+        {"label": "Total Test Cases",        "value": f"{summary['total_cases']:,}",
          "delta": f"{summary['total_projects']} projects"},
-        {"label": "Automated",           "value": f"{summary['total_auto']:,}",
+        {"label": "Automated",               "value": f"{summary['total_auto']:,}",
          "delta": f"{summary['total_pending']:,} pending"},
-        {"label": "Coverage",            "value": f"{cov:.1f}%",
-         "delta": "of automatable cases"},
-        {"label": "Non-Automatable",     "value": f"{summary['total_nonaut']:,}"},
-        {"label": "Projects Completed",  "value": str(summary.get("completed", 0)),
+        {"label": "Overall Coverage",        "value": f"{overall:.1f}%",
+         "delta": "automated ÷ total cases"},
+        {"label": "Automatable Progress",    "value": f"{auto_prog:.1f}%",
+         "delta": "automated ÷ automatable"},
+        {"label": "Non-Automatable",         "value": f"{summary['total_nonaut']:,}"},
+        {"label": "Projects Completed",      "value": str(summary.get("completed", 0)),
          "delta": f"of {summary['total_projects']}"},
-        {"label": "Not Started",         "value": str(summary.get("not_started", 0)),
-         "delta": f"{summary.get('in_progress', 0)} in progress"},
     ]
     kpi_row(metrics)

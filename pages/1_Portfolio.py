@@ -133,14 +133,16 @@ for row_group in rows_iter:
                 unsafe_allow_html=True,
             )
             st.markdown(f"**{row['name']}**")
+            overall_cov = float(row.get("overall_coverage_pct", 0))
             st.metric(
                 label="Coverage",
-                value=f"{cov:.1f}%",
-                delta=f"{auto:,} / {auto_tgt:,} automated",
+                value=f"{overall_cov:.1f}%",
+                delta=f"{auto:,} / {int(row['total_cases']):,} automated",
                 label_visibility="collapsed",
             )
-            st.progress(min(cov / 100, 1.0))
+            st.progress(min(overall_cov / 100, 1.0))
             st.caption(
+                f"Automatable progress **{cov:.1f}%** ({auto:,} / {auto_tgt:,})  \n"
                 f"Pending **{pend:,}** · Non-auto **{nona:,}**  \n"
                 f"Target **{target}**"
             )

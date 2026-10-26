@@ -105,12 +105,14 @@ df_plan  = df_plan_all[df_plan_all["project_id"] == sel_id].reset_index(drop=Tru
 df_comp_row = df_comp[df_comp["project_id"] == sel_id]
 
 # ── Header ─────────────────────────────────────────────────────────────────────
-cov       = float(row.get("coverage_pct", 0))
-auto_tgt  = int(row.get("automatable", int(row["total_cases"]) - int(row.get("non_automatable",0))))
-auto_cnt  = int(row["automated"])
-pend_cnt  = int(row.get("pending", auto_tgt - auto_cnt))
-non_cnt   = int(row.get("non_automatable", 0))
-status    = str(row.get("status",""))
+cov          = float(row.get("coverage_pct", 0))          # Automated ÷ Automatable
+overall_cov  = float(row.get("overall_coverage_pct", 0))  # Automated ÷ Total (matches Excel)
+auto_tgt     = int(row.get("automatable", int(row["total_cases"]) - int(row.get("non_automatable",0))))
+auto_cnt     = int(row["automated"])
+pend_cnt     = int(row.get("pending", auto_tgt - auto_cnt))
+non_cnt      = int(row.get("non_automatable", 0))
+total_cnt    = int(row.get("total_cases", 0))
+status       = str(row.get("status",""))
 
 col_hdr, col_badge = st.columns([3, 1])
 with col_hdr:
@@ -127,14 +129,15 @@ st.divider()
 
 # ── KPIs ───────────────────────────────────────────────────────────────────────
 kpi_row([
-    {"label": "Coverage",        "value": f"{cov:.1f}%",
-     "delta": f"{auto_cnt:,} of {auto_tgt:,}"},
-    {"label": "Automated",       "value": f"{auto_cnt:,}"},
-    {"label": "Pending",         "value": f"{pend_cnt:,}",
+    {"label": "Overall Coverage",     "value": f"{overall_cov:.1f}%",
+     "delta": f"{auto_cnt:,} of {total_cnt:,} total"},
+    {"label": "Automatable Progress", "value": f"{cov:.1f}%",
+     "delta": f"{auto_cnt:,} of {auto_tgt:,} automatable"},
+    {"label": "Pending",              "value": f"{pend_cnt:,}",
      "delta": f"~{daily_avg:.0f} cases/day" if daily_avg else "TBD"},
-    {"label": "Non-Automatable", "value": f"{non_cnt:,}",
-     "delta": f"{non_cnt/max(int(row['total_cases']),1)*100:.1f}% of total"},
-    {"label": "Total Cases",     "value": f"{int(row['total_cases']):,}"},
+    {"label": "Non-Automatable",      "value": f"{non_cnt:,}",
+     "delta": f"{non_cnt/max(total_cnt,1)*100:.1f}% of total"},
+    {"label": "Total Cases",          "value": f"{total_cnt:,}"},
 ])
 
 st.markdown("")
@@ -169,7 +172,7 @@ with tab_summ:
             hovertemplate="<b>%{label}</b><br>%{value:,} cases (%{percent})<extra></extra>",
         ))
         fig.add_annotation(
-            text=f"<b>{cov:.1f}%</b><br><span style='font-size:10px'>Automated</span>",
+            text=f"<b>{overall_cov:.1f}%</b><br><span style='font-size:10px'>Coverage</span>",
             x=0.5, y=0.5, showarrow=False, font_size=16,
         )
         fig.update_layout(

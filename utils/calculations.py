@@ -9,10 +9,19 @@ import pandas as pd
 
 
 def coverage_pct(row: pd.Series) -> float:
+    """Automatable progress: Automated ÷ Automatable Cases (excludes non-automatable)."""
     auto_tgt = int(row.get("automatable", int(row["total_cases"]) - int(row.get("non_automatable", 0))))
     if auto_tgt == 0:
-        return 100.0
+        return 0.0
     return round(min(int(row["automated"]) / auto_tgt * 100, 100), 1)
+
+
+def overall_coverage_pct(row: pd.Series) -> float:
+    """Overall coverage: Automated ÷ Total Cases (matches Excel, management view)."""
+    total = int(row.get("total_cases", 0))
+    if total == 0:
+        return 0.0
+    return round(min(int(row["automated"]) / total * 100, 100), 1)
 
 
 def pending(row: pd.Series) -> int:
@@ -22,32 +31,36 @@ def pending(row: pd.Series) -> int:
 
 def enrich_projects(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df["coverage_pct"] = df.apply(coverage_pct, axis=1)
-    df["pending"]      = df.apply(pending, axis=1)
+    df["coverage_pct"]         = df.apply(coverage_pct, axis=1)
+    df["overall_coverage_pct"] = df.apply(overall_coverage_pct, axis=1)
+    df["pending"]              = df.apply(pending, axis=1)
     return df
 
 
 def portfolio_summary(df: pd.DataFrame) -> dict[str, Any]:
-    total_cases  = int(df["total_cases"].sum())
-    total_auto   = int(df["automated"].sum())
-    total_nonaut = int(df["non_automatable"].sum())
+    total_cases    = int(df["total_cases"].sum())
+    total_auto     = int(df["automated"].sum())
+    total_nonaut   = int(df["non_automatable"].sum())
     total_auto_tgt = int(df["automatable"].sum()) if "automatable" in df.columns else total_cases - total_nonaut
     total_pending  = max(total_auto_tgt - total_auto, 0)
-    coverage       = round(total_auto / total_auto_tgt * 100, 1) if total_auto_tgt else 0.0
+    # Both coverage metrics at portfolio level
+    auto_progress  = round(total_auto / total_auto_tgt * 100, 1) if total_auto_tgt else 0.0
+    overall_cov    = round(total_auto / total_cases * 100, 1) if total_cases else 0.0
     completed      = int((df["coverage_pct"] >= 100).sum()) if "coverage_pct" in df.columns else 0
     in_progress    = int((df["status"] == "In Progress").sum())
     not_started    = int((df["status"] == "Not Started").sum())
     return {
-        "total_cases":    total_cases,
-        "total_auto":     total_auto,
-        "total_nonaut":   total_nonaut,
-        "total_pending":  total_pending,
-        "coverage_pct":   coverage,
-        "completed":      completed,
-        "in_progress":    in_progress,
-        "not_started":    not_started,
-        "total_projects": len(df),
-        "total_auto_tgt": total_auto_tgt,
+        "total_cases":         total_cases,
+        "total_auto":          total_auto,
+        "total_nonaut":        total_nonaut,
+        "total_pending":       total_pending,
+        "coverage_pct":        auto_progress,   # Automated ÷ Automatable
+        "overall_coverage_pct": overall_cov,    # Automated ÷ Total (matches Excel)
+        "completed":           completed,
+        "in_progress":         in_progress,
+        "not_started":         not_started,
+        "total_projects":      len(df),
+        "total_auto_tgt":      total_auto_tgt,
     }
 
 
